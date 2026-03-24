@@ -1,0 +1,5 @@
+aws_region      = "eu-west-2"
+deployment_name = "energyops-dev-quiet-otter"
+kms_key_arn     = "arn:aws:kms:eu-west-2:123456789012:key/example"
+tags            = {}
+
