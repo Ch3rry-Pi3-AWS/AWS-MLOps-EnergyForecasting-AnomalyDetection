@@ -1,0 +1,7 @@
+aws_region           = "us-east-1"
+environment          = "dev"
+deployment_name      = "energyops-dev-quiet-otter"
+kms_key_arn          = "arn:aws:kms:us-east-1:123456789012:key/example"
+lambda_role_arn      = "arn:aws:iam::123456789012:role/iam-lambda-energyops-dev-quiet-otter"
+lakehouse_bucket_name = "dl-energyops-dev-quiet-otter"
+tags                 = {}
