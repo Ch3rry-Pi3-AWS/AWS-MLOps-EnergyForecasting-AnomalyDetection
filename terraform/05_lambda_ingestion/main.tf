@@ -51,9 +51,9 @@ resource "aws_cloudwatch_log_group" "main" {
   )
 }
 
-# Deploy the starter ingestion Lambda. For now it writes Bronze ingestion
-# manifests so the platform can prove packaging, IAM, S3, and KMS wiring
-# before richer API-fetch logic is introduced.
+# Deploy the ingestion Lambda that fetches public energy and weather payloads,
+# lands the raw JSON into Bronze S3 prefixes, and records an audit manifest
+# for each invocation.
 resource "aws_lambda_function" "main" {
   function_name = local.function_name
   role          = var.lambda_role_arn
@@ -71,13 +71,20 @@ resource "aws_lambda_function" "main" {
   # variables such as AWS_REGION are provided by Lambda automatically.
   environment {
     variables = {
-      PROJECT_ENV          = var.environment
-      DEPLOYMENT_NAME      = var.deployment_name
-      LAKEHOUSE_BUCKET     = var.lakehouse_bucket_name
-      BRONZE_INGEST_PREFIX = var.bronze_ingestion_prefix
-      KMS_KEY_ARN          = var.kms_key_arn
-      ENERGY_API_BASE_URL  = var.energy_api_base_url
-      WEATHER_API_BASE_URL = var.weather_api_base_url
+      PROJECT_ENV           = var.environment
+      DEPLOYMENT_NAME       = var.deployment_name
+      LAKEHOUSE_BUCKET      = var.lakehouse_bucket_name
+      BRONZE_INGEST_PREFIX  = var.bronze_ingestion_prefix
+      BRONZE_RAW_PREFIX     = var.bronze_raw_prefix
+      KMS_KEY_ARN           = var.kms_key_arn
+      ENERGY_API_BASE_URL   = var.energy_api_base_url
+      ENERGY_API_PATH       = var.energy_api_path
+      WEATHER_API_BASE_URL  = var.weather_api_base_url
+      WEATHER_API_PATH      = var.weather_api_path
+      WEATHER_LATITUDE      = tostring(var.weather_latitude)
+      WEATHER_LONGITUDE     = tostring(var.weather_longitude)
+      WEATHER_HOURLY_FIELDS = join(",", var.weather_hourly_fields)
+      WEATHER_TIMEZONE      = var.weather_timezone
     }
   }
 

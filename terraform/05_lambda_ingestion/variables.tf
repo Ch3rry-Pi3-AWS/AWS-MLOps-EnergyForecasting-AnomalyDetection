@@ -82,6 +82,12 @@ variable "bronze_ingestion_prefix" {
   default     = "bronze/ingestion-manifests"
 }
 
+variable "bronze_raw_prefix" {
+  type        = string
+  description = "S3 prefix used for raw Bronze source payloads"
+  default     = "bronze/raw"
+}
+
 # These source URLs are configuration rather than code constants so later
 # ingestion iterations can evolve without repackaging the function purely for
 # endpoint changes.
@@ -91,10 +97,46 @@ variable "energy_api_base_url" {
   default     = "https://data.elexon.co.uk"
 }
 
+variable "energy_api_path" {
+  type        = string
+  description = "Relative API path for the public electricity demand source"
+  default     = "/bmrs/api/v1/datasets/ITSDO"
+}
+
 variable "weather_api_base_url" {
   type        = string
   description = "Base URL for the public weather data source"
   default     = "https://api.open-meteo.com"
+}
+
+variable "weather_api_path" {
+  type        = string
+  description = "Relative API path for the public weather source"
+  default     = "/v1/forecast"
+}
+
+variable "weather_latitude" {
+  type        = number
+  description = "Latitude used for weather retrieval"
+  default     = 51.5072
+}
+
+variable "weather_longitude" {
+  type        = number
+  description = "Longitude used for weather retrieval"
+  default     = -0.1276
+}
+
+variable "weather_hourly_fields" {
+  type        = list(string)
+  description = "Hourly weather fields requested from Open-Meteo"
+  default     = ["temperature_2m", "relative_humidity_2m", "wind_speed_10m"]
+}
+
+variable "weather_timezone" {
+  type        = string
+  description = "Timezone passed to the weather API"
+  default     = "GMT"
 }
 
 variable "tags" {
