@@ -1,3 +1,5 @@
+# Expose bucket names and ARNs so downstream IAM and compute modules can
+# reference the storage layer without hardcoding values.
 output "lakehouse_bucket_name" {
   value = aws_s3_bucket.buckets["lakehouse"].bucket
 }
@@ -21,4 +23,3 @@ output "monitoring_bucket_name" {
 output "monitoring_bucket_arn" {
   value = aws_s3_bucket.buckets["monitoring"].arn
 }
-

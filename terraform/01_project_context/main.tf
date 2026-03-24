@@ -9,14 +9,20 @@ terraform {
   }
 }
 
+# Generate one shared animal-style suffix for the whole deployment so later
+# resources can reuse a consistent naming seed rather than inventing their
+# own unrelated random names.
 resource "random_pet" "stack" {
   length    = 2
   separator = "-"
 }
 
 locals {
+  # Build the core deployment identifier consumed by later modules.
   deployment_name = "${var.resource_prefix}-${var.environment}-${random_pet.stack.id}"
 
+  # Keep the common tag set centralised here so downstream modules can apply
+  # consistent metadata without duplicating the same map repeatedly.
   standard_tags = merge(
     {
       Project      = var.project_name
@@ -32,4 +38,3 @@ locals {
     var.extra_tags
   )
 }
-

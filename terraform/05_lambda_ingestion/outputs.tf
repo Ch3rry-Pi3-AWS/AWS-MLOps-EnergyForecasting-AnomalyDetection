@@ -1,3 +1,5 @@
+# Surface the key Lambda identifiers so later scheduler or event-source
+# modules can invoke the function without recomputing names.
 output "lambda_function_name" {
   value = aws_lambda_function.main.function_name
 }
@@ -13,4 +15,3 @@ output "lambda_invoke_arn" {
 output "lambda_log_group_name" {
   value = aws_cloudwatch_log_group.main.name
 }
-

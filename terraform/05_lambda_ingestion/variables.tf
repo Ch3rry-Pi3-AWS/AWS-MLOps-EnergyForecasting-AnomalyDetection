@@ -1,8 +1,12 @@
+# Region is passed explicitly so the function is created in the same region
+# as the rest of the stack regardless of local CLI defaults.
 variable "aws_region" {
   type        = string
   description = "AWS region for the Lambda function"
 }
 
+# The first ingestion function receives shared infrastructure identifiers
+# from upstream modules rather than hardcoding them locally.
 variable "environment" {
   type        = string
   description = "Deployment environment"
@@ -46,6 +50,8 @@ variable "handler" {
   default     = "app.handler"
 }
 
+# Runtime sizing defaults are intentionally modest for a starter ingestion
+# function that currently writes lightweight manifest files.
 variable "architecture" {
   type        = string
   description = "Lambda architecture"
@@ -76,6 +82,9 @@ variable "bronze_ingestion_prefix" {
   default     = "bronze/ingestion-manifests"
 }
 
+# These source URLs are configuration rather than code constants so later
+# ingestion iterations can evolve without repackaging the function purely for
+# endpoint changes.
 variable "energy_api_base_url" {
   type        = string
   description = "Base URL for the public electricity data source"
@@ -93,4 +102,3 @@ variable "tags" {
   description = "Tags applied to the Lambda resources"
   default     = {}
 }
-

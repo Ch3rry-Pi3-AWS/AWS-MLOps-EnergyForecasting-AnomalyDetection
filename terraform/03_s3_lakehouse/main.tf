@@ -14,6 +14,8 @@ provider "aws" {
 }
 
 locals {
+  # Generate the default bucket names centrally so a caller can override
+  # individual names without changing the loop-based resource structure.
   bucket_names = {
     lakehouse  = var.lakehouse_bucket_name != null ? var.lakehouse_bucket_name : "dl-${var.deployment_name}"
     artefacts  = var.artefact_bucket_name != null ? var.artefact_bucket_name : "mlops-artifacts-${var.deployment_name}"
@@ -21,6 +23,9 @@ locals {
   }
 }
 
+# Create the main storage buckets for data, model artefacts, and operational
+# monitoring outputs. `for_each` keeps the configuration compact while still
+# producing distinct resources.
 resource "aws_s3_bucket" "buckets" {
   for_each = local.bucket_names
 
@@ -36,6 +41,8 @@ resource "aws_s3_bucket" "buckets" {
   )
 }
 
+# Enable bucket versioning across the board so accidental overwrites or
+# deletes are easier to recover from during development.
 resource "aws_s3_bucket_versioning" "buckets" {
   for_each = aws_s3_bucket.buckets
 
@@ -46,6 +53,8 @@ resource "aws_s3_bucket_versioning" "buckets" {
   }
 }
 
+# Enforce KMS-backed encryption by default on all buckets so later services
+# do not need to remember to request encryption on every write path.
 resource "aws_s3_bucket_server_side_encryption_configuration" "buckets" {
   for_each = aws_s3_bucket.buckets
 
@@ -61,6 +70,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "buckets" {
   }
 }
 
+# Block all public exposure paths. Data-platform buckets should start from a
+# private-by-default stance rather than relying on human discipline later.
 resource "aws_s3_bucket_public_access_block" "buckets" {
   for_each = aws_s3_bucket.buckets
 
@@ -71,6 +82,8 @@ resource "aws_s3_bucket_public_access_block" "buckets" {
   restrict_public_buckets = true
 }
 
+# Seed the lakehouse bucket with the initial Bronze/Silver/Gold-style
+# prefixes so the structure is visible and predictable from the outset.
 resource "aws_s3_object" "lakehouse_prefixes" {
   for_each = var.create_lakehouse_prefixes ? toset(var.lakehouse_prefixes) : toset([])
 
@@ -81,4 +94,3 @@ resource "aws_s3_object" "lakehouse_prefixes" {
   kms_key_id             = var.kms_key_arn
   content_type           = "application/x-directory"
 }
-

@@ -1,9 +1,12 @@
+# Core deployment location used by downstream AWS modules.
 variable "aws_region" {
   type        = string
   description = "AWS region used by downstream modules"
   default     = "eu-west-2"
 }
 
+# Environment name is embedded into resource names and tags so dev and prod
+# stay visually distinct.
 variable "environment" {
   type        = string
   description = "Environment name such as dev or prod"
@@ -16,6 +19,7 @@ variable "project_name" {
   default     = "Real-Time Energy Forecasting and Anomaly Detection"
 }
 
+# The slug is a compact project identifier intended for structured metadata.
 variable "project_slug" {
   type        = string
   description = "Lowercase slug used in tags and configuration"
@@ -28,6 +32,8 @@ variable "resource_prefix" {
   default     = "energyops"
 }
 
+# Ownership and cost metadata are kept explicit because they are usually
+# among the first tags required in real AWS environments.
 variable "owner" {
   type        = string
   description = "Owner tag"
@@ -45,4 +51,3 @@ variable "extra_tags" {
   description = "Optional extra tags merged into the standard tag set"
   default     = {}
 }
-
