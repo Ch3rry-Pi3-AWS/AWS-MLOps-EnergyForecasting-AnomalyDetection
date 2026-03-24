@@ -1,36 +1,256 @@
-# AWS Real-Time Energy Forecasting and Anomaly Detection (IaC)
+# AWS Real-Time Energy Forecasting And Anomaly Detection
 
-Terraform-first infrastructure for a production-style AWS MLOps project focused on near-real-time energy-demand forecasting, anomaly detection, and uncertainty estimation.
+Production-style AWS MLOps project built around near-real-time public energy-demand and weather ingestion, a Bronze/Silver/Gold lakehouse on Amazon S3, and modular Terraform-first infrastructure.
 
-## Introduction
-This repository scaffolds an AWS platform that ingests public electricity and weather data, lands it in a Bronze/Silver/Gold lakehouse on Amazon S3, and prepares the shared infrastructure needed for training, deployment, and monitoring with Amazon SageMaker.
+This repository currently covers:
 
-The current implementation covers the foundation layer plus the first ingestion workload. It sets up the shared naming context, KMS encryption, S3 lakehouse buckets, IAM roles, an initial ingestion Lambda, helper scripts, and the repo structure that later transformation and ML resources will depend on.
+1. shared Terraform deployment context and naming
+2. KMS-backed encryption
+3. S3 lakehouse buckets and starter Bronze or Silver or Gold prefixes
+4. IAM foundation roles for Lambda, Glue, and SageMaker
+5. a real ingestion Lambda that fetches public Elexon and Open-Meteo data
+6. EventBridge Scheduler orchestration for recurring ingestion
+7. helper deploy and destroy scripts that auto-wire Terraform outputs forward
 
-## Real-World Use Case
-Energy suppliers, grid operators, and operations teams need timely demand forecasts and anomaly alerts to support balancing decisions, planning, and incident response. A credible AWS portfolio project should show how raw public data can be ingested, standardized into a medallion architecture, and fed into forecasting and anomaly-detection services with strong security, automation, and observability.
+## Table Of Contents
 
-## Best Architecture Choice
-For v1, the most sensible design is near-real-time rather than fully streaming everywhere.
+- [Overview](#overview)
+- [Workflow Diagrams](#workflow-diagrams)
+- [Repository Structure](#repository-structure)
+- [AWS Prerequisites](#aws-prerequisites)
+- [Windows AWS CLI Setup](#windows-aws-cli-setup)
+- [Git And GitHub Setup](#git-and-github-setup)
+- [Configuration And Naming Strategy](#configuration-and-naming-strategy)
+- [Terraform Module Workflow](#terraform-module-workflow)
+- [Deploy And Destroy Commands](#deploy-and-destroy-commands)
+- [Current Bronze Ingestion Behaviour](#current-bronze-ingestion-behaviour)
+- [Example Bronze Outputs](#example-bronze-outputs)
+- [Verification Commands](#verification-commands)
+- [Troubleshooting Notes](#troubleshooting-notes)
+- [Current Scope And Next Steps](#current-scope-and-next-steps)
+- [References](#references)
 
-- `Amazon S3` for the Bronze, Silver, and Gold lakehouse
-- `AWS KMS` for encryption of shared storage and downstream assets
-- `Amazon Kinesis Data Streams` for event ingestion where streaming adds value
-- `AWS Lambda` for lightweight ingestion and normalization
-- `AWS Glue` for cataloguing and transformation jobs
-- `Amazon SageMaker` for training pipelines, model registry, and inference endpoints
-- `Amazon EventBridge Scheduler` for orchestration
-- `Amazon CloudWatch` for platform and model alerting
-- `Amazon Redshift Serverless` as an optional later analytics-serving layer
+## Overview
 
-## Quick Start
-1. Install prerequisites:
-   - AWS CLI
-   - Terraform (>= 1.5)
-   - Python 3.10+
+<details open>
+<summary>Show or hide section</summary>
 
-2. Authenticate to AWS with the AWS CLI:
-If IAM Identity Center is not enabled for your account, create or use an IAM user access key in the AWS Console and then configure the CLI locally:
+The project is intended to become a realistic AWS portfolio implementation for:
+
+- energy-demand forecasting
+- anomaly detection
+- uncertainty-aware scenario analysis
+
+The architecture is intentionally being built in disciplined stages rather than all at once.
+
+What exists now:
+
+- `terraform/01_project_context`
+  creates a shared deployment identity such as `energyops-dev-creative-antelope`
+- `terraform/02_kms`
+  creates a customer-managed KMS key and alias
+- `terraform/03_s3_lakehouse`
+  creates the lakehouse, artefact, and monitoring buckets
+- `terraform/04_iam_foundation`
+  creates base execution roles for Lambda, Glue, and SageMaker
+- `terraform/05_lambda_ingestion`
+  packages and deploys a Python ingestion Lambda
+- `terraform/06_eventbridge_scheduler`
+  creates a recurring schedule that invokes the ingestion Lambda every 30 minutes by default
+
+The ingestion path is now real rather than placeholder-only.
+
+On each successful invocation, the Lambda:
+
+1. calls the Elexon public demand endpoint
+2. calls the Open-Meteo weather endpoint
+3. writes the raw energy JSON into Bronze S3
+4. writes the raw weather JSON into Bronze S3
+5. writes a manifest describing the invocation and the stored object locations
+
+The design goal is to preserve raw upstream payloads first, then add Glue catalogue and transformation layers on top of stable Bronze storage.
+
+</details>
+
+## Workflow Diagrams
+
+<details open>
+<summary>Show or hide section</summary>
+
+Current infrastructure and ingestion workflow:
+
+```mermaid
+flowchart LR
+    A[Project context and naming] --> B[KMS]
+    A --> C[S3 lakehouse]
+    A --> D[IAM foundation]
+    B --> C
+    B --> D
+    D --> E[Lambda ingestion]
+    C --> E
+    B --> E
+    F[EventBridge Scheduler] --> E
+    E --> G[Bronze raw energy JSON]
+    E --> H[Bronze raw weather JSON]
+    E --> I[Bronze ingestion manifest]
+```
+
+Current Bronze ingestion data flow:
+
+```mermaid
+flowchart LR
+    A[Elexon ITSDO API] --> B[Lambda ingestion]
+    C[Open-Meteo forecast API] --> B
+    B --> D[bronze/raw/energy]
+    B --> E[bronze/raw/weather]
+    B --> F[bronze/ingestion-manifests]
+```
+
+Target future platform direction:
+
+```mermaid
+flowchart LR
+    A[Bronze raw data in S3] --> B[Glue catalogue]
+    B --> C[Glue Bronze-to-Silver transforms]
+    C --> D[Silver curated data]
+    D --> E[Glue Silver-to-Gold transforms]
+    E --> F[Gold serving data]
+    D --> G[SageMaker training pipelines]
+    G --> H[Model registry and endpoint]
+    H --> I[CloudWatch and model monitoring]
+```
+
+</details>
+
+## Repository Structure
+
+<details>
+<summary>Show or hide section</summary>
+
+```text
+AWS-MLOps-EnergyForecasting-AnomalyDetection/
+|-- .github/
+|   `-- workflows/
+|       `-- ci.yml
+|-- guides/
+|   `-- setup.md
+|-- lambda/
+|   `-- ingestion/
+|       `-- app.py
+|-- scripts/
+|   |-- deploy.py
+|   `-- destroy.py
+|-- src/
+|   `-- energy_forecasting/
+|       |-- __init__.py
+|       |-- config/
+|       |   |-- __init__.py
+|       |   `-- settings.py
+|       |-- ingestion/
+|       |   |-- __init__.py
+|       |   `-- public_sources.py
+|       |-- ml/
+|       |   |-- __init__.py
+|       |   `-- pipeline.py
+|       |-- orchestration/
+|       |   `-- __init__.py
+|       `-- transformation/
+|           |-- __init__.py
+|           `-- bronze_to_silver.py
+|-- terraform/
+|   |-- 01_project_context/
+|   |   |-- main.tf
+|   |   |-- outputs.tf
+|   |   |-- terraform.tfvars.example
+|   |   `-- variables.tf
+|   |-- 02_kms/
+|   |   |-- main.tf
+|   |   |-- outputs.tf
+|   |   |-- terraform.tfvars.example
+|   |   `-- variables.tf
+|   |-- 03_s3_lakehouse/
+|   |   |-- main.tf
+|   |   |-- outputs.tf
+|   |   |-- terraform.tfvars.example
+|   |   `-- variables.tf
+|   |-- 04_iam_foundation/
+|   |   |-- main.tf
+|   |   |-- outputs.tf
+|   |   |-- terraform.tfvars.example
+|   |   `-- variables.tf
+|   |-- 05_lambda_ingestion/
+|   |   |-- main.tf
+|   |   |-- outputs.tf
+|   |   |-- terraform.tfvars.example
+|   |   `-- variables.tf
+|   `-- 06_eventbridge_scheduler/
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- terraform.tfvars.example
+|       `-- variables.tf
+|-- tests/
+|   |-- test_lambda_ingestion.py
+|   |-- test_public_sources.py
+|   `-- test_settings.py
+|-- .env.example
+|-- .gitignore
+|-- pyproject.toml
+`-- README.md
+```
+
+Current core files:
+
+- `scripts/deploy.py`
+  orchestrates Terraform applies in dependency order and auto-writes live `terraform.tfvars`
+- `scripts/destroy.py`
+  destroys Terraform modules in reverse dependency order
+- `lambda/ingestion/app.py`
+  real ingestion handler that fetches energy and weather JSON, stores raw Bronze payloads, and writes a manifest
+- `terraform/01_project_context/main.tf`
+  generates the shared deployment name and common tags
+- `terraform/02_kms/main.tf`
+  provisions the KMS key and alias used by later modules
+- `terraform/03_s3_lakehouse/main.tf`
+  provisions the S3 lakehouse, artefact, and monitoring buckets
+- `terraform/04_iam_foundation/main.tf`
+  provisions base IAM roles for Lambda, Glue, and SageMaker
+- `terraform/05_lambda_ingestion/main.tf`
+  packages and deploys the ingestion Lambda
+- `terraform/06_eventbridge_scheduler/main.tf`
+  creates the recurring scheduler and Lambda invocation permission
+
+The README is now the canonical setup and usage guide. `guides/setup.md` is retained only as a pointer for continuity.
+
+</details>
+
+## AWS Prerequisites
+
+<details>
+<summary>Show or hide section</summary>
+
+You need:
+
+- an AWS account
+- AWS CLI v2
+- Terraform `>= 1.5`
+- Python `>= 3.10`
+- permission to create or update:
+  - KMS keys
+  - S3 buckets
+  - IAM roles and policies
+  - Lambda functions
+  - EventBridge Scheduler schedules
+
+Basic checks:
+
+```powershell
+aws --version
+terraform version
+python --version
+aws sts get-caller-identity
+```
+
+If IAM Identity Center is not enabled, configure the AWS CLI with an IAM user access key:
 
 ```powershell
 aws configure
@@ -38,66 +258,173 @@ aws sts get-caller-identity
 ```
 
 When prompted by `aws configure`, enter:
+
 - `AWS Access Key ID`
 - `AWS Secret Access Key`
 - `Default region name`, for example `us-east-1`
 - `Default output format`, for example `json`
 
-3. Deploy the foundation layer and first ingestion Lambda:
+</details>
+
+## Windows AWS CLI Setup
+
+<details>
+<summary>Show or hide section</summary>
+
+The project currently assumes a local Windows PowerShell workflow.
+
+Check whether the AWS CLI is on `PATH`:
+
 ```powershell
-python scripts\deploy.py
+aws --version
 ```
 
-This deploys the shared project context, KMS key, S3 lakehouse buckets, IAM foundation roles, and the first ingestion Lambda.
+If it is not installed:
 
-## Architecture Overview
-```mermaid
-flowchart LR
-    C[Project context and naming] --> K[KMS key]
-    C --> S[S3 lakehouse buckets]
-    C --> I[IAM foundation roles]
-    K --> S
-    K --> I
-    S --> B[bronze]
-    S --> Si[silver]
-    S --> G[gold]
-    I --> L[Lambda ingestion]
-    I --> Gl[Glue transforms]
-    I --> Sm[SageMaker pipelines and endpoints]
+```powershell
+winget install Amazon.AWSCLI
 ```
 
-## Resource Naming
-Resources use a clear resource prefix followed by the environment and a generated random animal suffix, for example:
+or:
 
-- `alias/kms-energyops-dev-quiet-otter`
-- `dl-energyops-dev-quiet-otter`
-- `iam-lambda-energyops-dev-quiet-otter`
+```powershell
+msiexec.exe /i https://awscli.amazonaws.com/AWSCLIV2.msi
+```
 
-The random animal suffix is created in the project context module and then propagated automatically to downstream resources through the deploy script.
+Verify the logged-in identity:
 
-## Project Structure
-- `terraform/01_project_context`: Shared deployment context, tags, and generated naming suffix
-- `terraform/02_kms`: AWS KMS key and alias for platform encryption
-- `terraform/03_s3_lakehouse`: S3 buckets for lakehouse, artefacts, and monitoring
-- `terraform/04_iam_foundation`: IAM roles and access policies for Lambda, Glue, and SageMaker
-- `terraform/05_lambda_ingestion`: Ingestion Lambda and CloudWatch log group
-- `terraform/06_eventbridge_scheduler`: Recurring scheduler that invokes the ingestion Lambda
-- `lambda/ingestion`: Lambda source code package
-- `scripts/`: Deploy and destroy helpers that auto-write `terraform.tfvars`
-- `guides/setup.md`: Detailed setup guide
-- `src/energy_forecasting/`: Python package scaffold for ingestion, transformation, ML, and orchestration
-- `tests/`: Initial unit tests
-- `.github/workflows/`: Starter CI workflow
+```powershell
+aws sts get-caller-identity
+```
 
-## Foundation Modules
-- `terraform/01_project_context`: Generates deployment naming context and standard tags
-- `terraform/02_kms`: Creates the KMS key used by S3 and later ML assets
-- `terraform/03_s3_lakehouse`: Creates the medallion-style buckets and starter prefixes
-- `terraform/04_iam_foundation`: Creates the base execution roles for Lambda, Glue, and SageMaker
-- `terraform/05_lambda_ingestion`: Creates the ingestion Lambda that fetches Elexon and Open-Meteo data into Bronze S3
-- `terraform/06_eventbridge_scheduler`: Creates the EventBridge Scheduler cadence for the ingestion Lambda
+The repository currently uses a local `.env` file to drive deployment defaults.
 
-Example variables files:
+Example:
+
+```env
+AWS_REGION=us-east-1
+PROJECT_ENV=dev
+PROJECT_NAME=Real-Time Energy Forecasting and Anomaly Detection
+PROJECT_SLUG=energy-forecast
+RESOURCE_PREFIX=energyops
+OWNER=portfolio
+COST_CENTRE=mlops-lab
+```
+
+The helper scripts read that file before generating `terraform.tfvars`.
+
+</details>
+
+## Git And GitHub Setup
+
+<details>
+<summary>Show or hide section</summary>
+
+Typical local folder for this repository:
+
+```text
+C:\Users\HP\OneDrive\Documents\Projects\AWS\AWS-MLOps-EnergyForecasting-AnomalyDetection
+```
+
+Connect an existing folder to GitHub:
+
+```powershell
+git init
+git remote add origin <YOUR_GITHUB_REMOTE_URL>
+git branch -M main
+git pull origin main
+```
+
+Check your current branch:
+
+```powershell
+git branch --show-current
+```
+
+Typical push flow:
+
+```powershell
+git add <FILES_OR_FOLDERS>
+git commit -m "Describe the infrastructure or code change"
+git push origin main
+```
+
+This repository has been developed incrementally by staging one Terraform module or code slice at a time.
+
+</details>
+
+## Configuration And Naming Strategy
+
+<details>
+<summary>Show or hide section</summary>
+
+The naming seed is created by `terraform/01_project_context`.
+
+It combines:
+
+- `RESOURCE_PREFIX`
+- `PROJECT_ENV`
+- a generated animal-style suffix from `random_pet`
+
+Example:
+
+```text
+energyops-dev-creative-antelope
+```
+
+That shared deployment name then flows into later resource names:
+
+- `alias/kms-energyops-dev-creative-antelope`
+- `dl-energyops-dev-creative-antelope`
+- `iam-lambda-energyops-dev-creative-antelope`
+- `lambda-ingest-energyops-dev-creative-antelope`
+- `scheduler-ingestion-energyops-dev-creative-antelope`
+
+The common tag set also starts in `01_project_context` and is reused downstream.
+
+Important note:
+
+- the random suffix stays stable as long as the Terraform state for `01_project_context` remains intact
+- if that module is destroyed and recreated, the generated suffix will change
+
+</details>
+
+## Terraform Module Workflow
+
+<details>
+<summary>Show or hide section</summary>
+
+The current module dependency chain is:
+
+1. `01_project_context`
+2. `02_kms`
+3. `03_s3_lakehouse`
+4. `04_iam_foundation`
+5. `05_lambda_ingestion`
+6. `06_eventbridge_scheduler`
+
+Why this order matters:
+
+- KMS depends on deployment context
+- S3 depends on KMS for encryption
+- IAM depends on both S3 and KMS ARNs
+- Lambda depends on IAM, S3, and KMS
+- Scheduler depends on the Lambda name and ARN
+
+The deploy script handles that handoff automatically.
+
+Under the hood, `scripts/deploy.py`:
+
+1. loads `.env`
+2. applies the project context module
+3. reads outputs such as `deployment_name` and `standard_tags_json`
+4. writes the next module's live `terraform.tfvars`
+5. repeats the process for each downstream module
+
+This is why manual configuration is kept to a minimum even though each resource lives in its own Terraform folder.
+
+Example Terraform example-variable files currently in the repo:
+
 - `terraform/01_project_context/terraform.tfvars.example`
 - `terraform/02_kms/terraform.tfvars.example`
 - `terraform/03_s3_lakehouse/terraform.tfvars.example`
@@ -105,18 +432,22 @@ Example variables files:
 - `terraform/05_lambda_ingestion/terraform.tfvars.example`
 - `terraform/06_eventbridge_scheduler/terraform.tfvars.example`
 
-## Phased Implementation Plan
-1. Foundation layer: project context, KMS, S3, IAM
-2. Ingestion layer: EventBridge, Lambda, Kinesis, source configs
-3. Transformation layer: Glue catalog, Glue jobs, Bronze-to-Silver and Silver-to-Gold processing
-4. ML layer: SageMaker pipelines, training jobs, model registry, endpoint
-5. Monitoring layer: CloudWatch alarms, model monitoring, retraining triggers
-6. Delivery layer: GitHub Actions CI/CD, environment promotion, optional Redshift Serverless
+</details>
 
-## Deploy/Destroy Options
-Deploy:
+## Deploy And Destroy Commands
+
+<details>
+<summary>Show or hide section</summary>
+
+Deploy everything built so far:
+
 ```powershell
 python scripts\deploy.py
+```
+
+Deploy individual modules:
+
+```powershell
 python scripts\deploy.py --context-only
 python scripts\deploy.py --kms-only
 python scripts\deploy.py --s3-only
@@ -125,16 +456,336 @@ python scripts\deploy.py --lambda-only
 python scripts\deploy.py --scheduler-only
 ```
 
-Destroy:
+Expected targeted deploy order:
+
 ```powershell
-python scripts\destroy.py
-python scripts\destroy.py --context-only
-python scripts\destroy.py --kms-only
-python scripts\destroy.py --s3-only
-python scripts\destroy.py --iam-only
-python scripts\destroy.py --lambda-only
-python scripts\destroy.py --scheduler-only
+python scripts\deploy.py --context-only
+python scripts\deploy.py --kms-only
+python scripts\deploy.py --s3-only
+python scripts\deploy.py --iam-only
+python scripts\deploy.py --lambda-only
+python scripts\deploy.py --scheduler-only
 ```
 
-## Guide
-See `guides/setup.md` for the detailed setup and deployment flow.
+Destroy everything built so far:
+
+```powershell
+python scripts\destroy.py
+```
+
+Destroy individual modules:
+
+```powershell
+python scripts\destroy.py --scheduler-only
+python scripts\destroy.py --lambda-only
+python scripts\destroy.py --iam-only
+python scripts\destroy.py --s3-only
+python scripts\destroy.py --kms-only
+python scripts\destroy.py --context-only
+```
+
+</details>
+
+## Current Bronze Ingestion Behaviour
+
+<details open>
+<summary>Show or hide section</summary>
+
+The ingestion Lambda is now a real external-data ingestion step.
+
+By default, it uses:
+
+- energy API base URL: `https://data.elexon.co.uk`
+- energy API path: `/bmrs/api/v1/datasets/ITSDO`
+- weather API base URL: `https://api.open-meteo.com`
+- weather API path: `/v1/forecast`
+- weather coordinates: `51.5072`, `-0.1276`
+- weather timezone: `GMT`
+- weather hourly fields:
+  - `temperature_2m`
+  - `relative_humidity_2m`
+  - `wind_speed_10m`
+
+What happens on each successful invocation:
+
+1. EventBridge Scheduler invokes the Lambda
+2. the Lambda fetches JSON from Elexon
+3. the Lambda fetches JSON from Open-Meteo
+4. the Lambda writes the raw Elexon payload to:
+   - `bronze/raw/energy/dt=<DATE>/<REQUEST_ID>.json`
+5. the Lambda writes the raw weather payload to:
+   - `bronze/raw/weather/dt=<DATE>/<REQUEST_ID>.json`
+6. the Lambda writes a manifest to:
+   - `bronze/ingestion-manifests/manifest/dt=<DATE>/<REQUEST_ID>.json`
+
+If an exception happens after the invocation starts:
+
+- the Lambda still writes a failure manifest containing the error type and message
+- then it raises the exception so the failure is visible in CloudWatch and Lambda metrics
+
+</details>
+
+## Example Bronze Outputs
+
+<details open>
+<summary>Show or hide section</summary>
+
+Example raw energy object:
+
+S3 key:
+
+```text
+bronze/raw/energy/dt=2026-03-24/8c4d2e1f.json
+```
+
+Example content:
+
+```json
+{
+  "data": [
+    {
+      "dataset": "ITSDO",
+      "publishTime": "2026-03-24T22:30:00Z",
+      "startTime": "2026-03-24T22:00:00Z",
+      "settlementDate": "2026-03-24",
+      "settlementPeriod": 45,
+      "demand": 28281
+    }
+  ]
+}
+```
+
+What this means:
+
+- this is the raw Elexon demand payload
+- `demand` is the actual electricity demand value returned by the source
+- `publishTime`, `startTime`, `settlementDate`, and `settlementPeriod` preserve source timing semantics for later transformation
+
+Example raw weather object:
+
+S3 key:
+
+```text
+bronze/raw/weather/dt=2026-03-24/8c4d2e1f.json
+```
+
+Example content:
+
+```json
+{
+  "latitude": 51.51147,
+  "longitude": -0.13078308,
+  "timezone": "GMT",
+  "hourly_units": {
+    "time": "iso8601",
+    "temperature_2m": "°C",
+    "relative_humidity_2m": "%",
+    "wind_speed_10m": "km/h"
+  },
+  "hourly": {
+    "time": [
+      "2026-03-24T22:00",
+      "2026-03-24T23:00"
+    ],
+    "temperature_2m": [11.1, 10.2],
+    "relative_humidity_2m": [71, 74],
+    "wind_speed_10m": [14.5, 13.2]
+  }
+}
+```
+
+What this means:
+
+- this is the raw Open-Meteo response
+- it preserves the raw arrays and units needed for later feature engineering
+- it gives the forecasting pipeline exogenous weather context
+
+Example ingestion manifest:
+
+S3 key:
+
+```text
+bronze/ingestion-manifests/manifest/dt=2026-03-24/8c4d2e1f.json
+```
+
+Example content:
+
+```json
+{
+  "request_id": "8c4d2e1f",
+  "event_time_utc": "2026-03-24T22:31:05.123456+00:00",
+  "deployment_name": "energyops-dev-creative-antelope",
+  "environment": "dev",
+  "status": "success",
+  "sources": {
+    "energy": {
+      "base_url": "https://data.elexon.co.uk",
+      "path": "/bmrs/api/v1/datasets/ITSDO"
+    },
+    "weather": {
+      "base_url": "https://api.open-meteo.com",
+      "path": "/v1/forecast",
+      "latitude": "51.5072",
+      "longitude": "-0.1276",
+      "hourly_fields": "temperature_2m,relative_humidity_2m,wind_speed_10m",
+      "timezone": "GMT"
+    }
+  },
+  "event": {
+    "trigger": "eventbridge-scheduler",
+    "source": "ingestion"
+  },
+  "outputs": {
+    "energy": {
+      "source_name": "energy",
+      "s3_key": "bronze/raw/energy/dt=2026-03-24/8c4d2e1f.json",
+      "record_count": 1
+    },
+    "weather": {
+      "source_name": "weather",
+      "s3_key": "bronze/raw/weather/dt=2026-03-24/8c4d2e1f.json",
+      "record_count": null
+    }
+  }
+}
+```
+
+What this means:
+
+- it is the audit record for the ingestion run
+- it records the source configuration used
+- it records where the raw payloads were stored
+- it tells you whether the invocation succeeded or failed
+
+Example failed manifest shape:
+
+```json
+{
+  "request_id": "8c4d2e1f",
+  "event_time_utc": "2026-03-24T22:31:05.123456+00:00",
+  "deployment_name": "energyops-dev-creative-antelope",
+  "environment": "dev",
+  "status": "failed",
+  "error": {
+    "type": "HTTPError",
+    "message": "502 Bad Gateway"
+  }
+}
+```
+
+</details>
+
+## Verification Commands
+
+<details>
+<summary>Show or hide section</summary>
+
+AWS identity and region:
+
+```powershell
+aws sts get-caller-identity
+aws configure list
+```
+
+Terraform validation:
+
+```powershell
+terraform -chdir=terraform/01_project_context validate
+terraform -chdir=terraform/02_kms validate
+terraform -chdir=terraform/03_s3_lakehouse validate
+terraform -chdir=terraform/04_iam_foundation validate
+terraform -chdir=terraform/05_lambda_ingestion validate
+terraform -chdir=terraform/06_eventbridge_scheduler validate
+```
+
+Python checks:
+
+```powershell
+python -m py_compile scripts\deploy.py scripts\destroy.py lambda\ingestion\app.py
+python -m pytest
+```
+
+AWS resource inspection examples:
+
+```powershell
+aws kms list-aliases
+aws s3 ls
+aws iam list-roles --query "Roles[?contains(RoleName, 'energyops')].[RoleName]" --output table
+aws lambda list-functions --query "Functions[?contains(FunctionName, 'lambda-ingest')].[FunctionName,Runtime]" --output table
+aws scheduler list-schedules --group-name default
+```
+
+</details>
+
+## Troubleshooting Notes
+
+<details>
+<summary>Show or hide section</summary>
+
+- If `aws sts get-caller-identity` fails, fix AWS CLI authentication before running Terraform.
+- If a targeted module deployment fails, confirm that its upstream modules have already been applied.
+- If Terraform cannot download providers, rerun `terraform init` with network access available.
+- If Lambda creation fails with a reserved environment variable error, do not try to define AWS-reserved Lambda runtime keys manually.
+- If the scheduler deploys but Lambda is not firing, check:
+  - the scheduler state
+  - the target role
+  - the Lambda permission resource
+- If the Lambda runs but raw payloads are missing, inspect:
+  - CloudWatch logs
+  - S3 object paths
+  - the ingestion manifest
+- If the Lambda fails against an upstream API, the failure manifest in Bronze should show the error type and message even when raw payloads are absent.
+- If pytest warns about local cache-folder permissions on Windows, that does not necessarily mean the tests failed. Check the actual test result summary.
+
+</details>
+
+## Current Scope And Next Steps
+
+<details open>
+<summary>Show or hide section</summary>
+
+Current implemented scope:
+
+- Terraform-first AWS infrastructure
+- modular deployment order with helper scripts
+- random animal-style deployment naming
+- KMS-backed storage encryption
+- Bronze lakehouse bucket structure
+- IAM foundation roles
+- real Lambda ingestion for energy and weather raw data
+- scheduled orchestration with EventBridge Scheduler
+
+Recommended next steps:
+
+1. `07_glue_catalog`
+   register the Bronze raw locations in the Glue Data Catalog
+2. `08_glue_bronze_to_silver_job`
+   clean and standardise the raw energy and weather data
+3. `09_glue_silver_to_gold_job`
+   create model-ready and analytics-ready Gold outputs
+4. SageMaker training and model registration
+5. endpoint deployment and monitoring
+
+</details>
+
+## References
+
+<details>
+<summary>Show or hide section</summary>
+
+- Elexon Developer Portal  
+  https://developer.data.elexon.co.uk/
+- Elexon public Insights API base  
+  https://data.elexon.co.uk/
+- Open-Meteo Forecast API  
+  https://api.open-meteo.com/v1/forecast
+- AWS Lambda  
+  https://docs.aws.amazon.com/lambda/
+- AWS EventBridge Scheduler  
+  https://docs.aws.amazon.com/scheduler/
+- AWS KMS  
+  https://docs.aws.amazon.com/kms/
+- Amazon S3  
+  https://docs.aws.amazon.com/s3/
+
+</details>
