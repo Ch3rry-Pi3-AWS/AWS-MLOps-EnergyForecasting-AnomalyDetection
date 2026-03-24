@@ -205,12 +205,23 @@ def _build_source_record(source_name: str, key: str, payload: dict[str, Any]) ->
         Manifest record describing the stored source object.
     """
 
-    record_count = len(payload.get("data", [])) if isinstance(payload.get("data"), list) else None
-    return {
+    record = {
         "source_name": source_name,
         "s3_key": key,
-        "record_count": record_count,
     }
+
+    if isinstance(payload.get("data"), list):
+        record["record_count"] = len(payload["data"])
+
+    hourly = payload.get("hourly")
+    if isinstance(hourly, dict) and isinstance(hourly.get("time"), list):
+        hourly_timestamps = hourly["time"]
+        record["hourly_timestamp_count"] = len(hourly_timestamps)
+        if hourly_timestamps:
+            record["forecast_start_time"] = hourly_timestamps[0]
+            record["forecast_end_time"] = hourly_timestamps[-1]
+
+    return record
 
 
 def _build_manifest_base(event: dict[str, Any], context: object, event_time_utc: str) -> dict[str, Any]:

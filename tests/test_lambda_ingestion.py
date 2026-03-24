@@ -33,3 +33,45 @@ def test_build_partitioned_s3_key_uses_source_and_date():
     )
 
     assert result == "bronze/raw/energy/dt=2026-03-24/request-123.json"
+
+
+def test_build_source_record_counts_elexon_rows():
+    module = _load_lambda_module()
+
+    result = module._build_source_record(
+        source_name="energy",
+        key="bronze/raw/energy/dt=2026-03-24/request-123.json",
+        payload={"data": [{"demand": 1}, {"demand": 2}]},
+    )
+
+    assert result == {
+        "source_name": "energy",
+        "s3_key": "bronze/raw/energy/dt=2026-03-24/request-123.json",
+        "record_count": 2,
+    }
+
+
+def test_build_source_record_summarises_weather_horizon():
+    module = _load_lambda_module()
+
+    result = module._build_source_record(
+        source_name="weather",
+        key="bronze/raw/weather/dt=2026-03-24/request-123.json",
+        payload={
+            "hourly": {
+                "time": [
+                    "2026-03-24T00:00",
+                    "2026-03-24T01:00",
+                    "2026-03-24T02:00",
+                ]
+            }
+        },
+    )
+
+    assert result == {
+        "source_name": "weather",
+        "s3_key": "bronze/raw/weather/dt=2026-03-24/request-123.json",
+        "hourly_timestamp_count": 3,
+        "forecast_start_time": "2026-03-24T00:00",
+        "forecast_end_time": "2026-03-24T02:00",
+    }

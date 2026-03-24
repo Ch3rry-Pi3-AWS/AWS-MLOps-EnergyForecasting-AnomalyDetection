@@ -24,6 +24,7 @@ This repository currently covers:
 - [Terraform Module Workflow](#terraform-module-workflow)
 - [Deploy And Destroy Commands](#deploy-and-destroy-commands)
 - [Current Bronze Ingestion Behaviour](#current-bronze-ingestion-behaviour)
+- [Source Data Notes](#source-data-notes)
 - [Example Bronze Outputs](#example-bronze-outputs)
 - [Verification Commands](#verification-commands)
 - [Troubleshooting Notes](#troubleshooting-notes)
@@ -132,8 +133,6 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |-- .github/
 |   `-- workflows/
 |       `-- ci.yml
-|-- guides/
-|   `-- setup.md
 |-- lambda/
 |   `-- ingestion/
 |       `-- app.py
@@ -219,7 +218,7 @@ Current core files:
 - `terraform/06_eventbridge_scheduler/main.tf`
   creates the recurring scheduler and Lambda invocation permission
 
-The README is now the canonical setup and usage guide. `guides/setup.md` is retained only as a pointer for continuity.
+The README is the canonical setup and usage guide.
 
 </details>
 
@@ -518,10 +517,83 @@ What happens on each successful invocation:
 6. the Lambda writes a manifest to:
    - `bronze/ingestion-manifests/manifest/dt=<DATE>/<REQUEST_ID>.json`
 
+The weather request is forecast-oriented rather than current-only. The Lambda calls Open-Meteo's `/v1/forecast` endpoint, so the raw weather object contains an hourly forecast horizon that can later be aligned with demand intervals for feature engineering.
+
 If an exception happens after the invocation starts:
 
 - the Lambda still writes a failure manifest containing the error type and message
 - then it raises the exception so the failure is visible in CloudWatch and Lambda metrics
+
+</details>
+
+## Source Data Notes
+
+<details open>
+<summary>Show or hide section</summary>
+
+### Elexon market terms
+
+- `ITSDO` stands for `Initial Transmission System Demand Out-Turn`.
+- Elexon defines it as the average megawatt value of demand for a Settlement Period, including transmission losses, station transformer load, pumped storage demand, and interconnector demand.
+- In practical terms, this makes `ITSDO` a useful system-level demand signal for forecasting because it reflects transmission-system demand rather than a narrow local reading.
+
+### Settlement date and settlement period
+
+- A `Settlement Period` is a 30-minute block in the GB electricity settlement process.
+- On a normal day there are `48` settlement periods.
+- On clock-change days, the number can differ, but `48` is the normal expectation.
+
+So in a sample record like:
+
+```json
+{
+  "settlementDate": "2026-03-24",
+  "settlementPeriod": 46
+}
+```
+
+it means:
+
+- the data point is for the 46th half-hour slot of `24 March 2026`
+- on a normal 48-period day, period `46` is late evening
+
+### Demand value meaning
+
+If the raw energy object contains:
+
+```json
+{
+  "demand": 27615
+}
+```
+
+that means:
+
+- the average system demand for that settlement period was `27,615 MW`
+- or approximately `27.6 GW`
+
+### Weather field naming
+
+Open-Meteo uses suffixes such as `_2m` and `_10m` to indicate the reference height above ground.
+
+Examples:
+
+- `temperature_2m`
+  air temperature at `2 metres` above ground
+- `relative_humidity_2m`
+  relative humidity at `2 metres` above ground
+- `wind_speed_10m`
+  wind speed at `10 metres` above ground
+
+### Why the weather payload is useful for forecasting
+
+The current weather request is a forecast request, not a historical observation request. The payload therefore contains future hourly values. That matters because electricity demand is strongly influenced by exogenous variables such as:
+
+- temperature
+- humidity
+- wind conditions
+
+The later forecasting pipeline can align those weather forecasts with demand intervals to create model features.
 
 </details>
 
@@ -535,7 +607,7 @@ Example raw energy object:
 S3 key:
 
 ```text
-bronze/raw/energy/dt=2026-03-24/8c4d2e1f.json
+bronze/raw/energy/dt=2026-03-24/a669c319-97a0-4ae9-9d3a-77284c842463.json
 ```
 
 Example content:
@@ -545,11 +617,11 @@ Example content:
   "data": [
     {
       "dataset": "ITSDO",
-      "publishTime": "2026-03-24T22:30:00Z",
-      "startTime": "2026-03-24T22:00:00Z",
+      "publishTime": "2026-03-24T23:00:00Z",
+      "startTime": "2026-03-24T22:30:00Z",
       "settlementDate": "2026-03-24",
-      "settlementPeriod": 45,
-      "demand": 28281
+      "settlementPeriod": 46,
+      "demand": 27615
     }
   ]
 }
@@ -558,15 +630,17 @@ Example content:
 What this means:
 
 - this is the raw Elexon demand payload
-- `demand` is the actual electricity demand value returned by the source
-- `publishTime`, `startTime`, `settlementDate`, and `settlementPeriod` preserve source timing semantics for later transformation
+- `dataset: "ITSDO"` means the record comes from the `Initial Transmission System Demand Out-Turn` dataset
+- `settlementPeriod: 46` means the 46th half-hour slot on `24 March 2026`
+- `demand: 27615` means an average demand of `27,615 MW` for that half-hour
+- `publishTime`, `startTime`, `settlementDate`, and `settlementPeriod` preserve source timing semantics for later transformation and joins
 
 Example raw weather object:
 
 S3 key:
 
 ```text
-bronze/raw/weather/dt=2026-03-24/8c4d2e1f.json
+bronze/raw/weather/dt=2026-03-24/a669c319-97a0-4ae9-9d3a-77284c842463.json
 ```
 
 Example content:
@@ -575,7 +649,11 @@ Example content:
 {
   "latitude": 51.51147,
   "longitude": -0.13078308,
+  "generationtime_ms": 0.11265277862548828,
+  "utc_offset_seconds": 0,
   "timezone": "GMT",
+  "timezone_abbreviation": "GMT",
+  "elevation": 16.0,
   "hourly_units": {
     "time": "iso8601",
     "temperature_2m": "°C",
@@ -584,36 +662,40 @@ Example content:
   },
   "hourly": {
     "time": [
-      "2026-03-24T22:00",
-      "2026-03-24T23:00"
+      "2026-03-24T00:00",
+      "2026-03-24T01:00",
+      "2026-03-24T02:00",
+      "2026-03-24T03:00"
     ],
-    "temperature_2m": [11.1, 10.2],
-    "relative_humidity_2m": [71, 74],
-    "wind_speed_10m": [14.5, 13.2]
+    "temperature_2m": [10.7, 10.3, 10.3, 10.1],
+    "relative_humidity_2m": [71, 77, 78, 83],
+    "wind_speed_10m": [13.7, 16.2, 17.3, 15.8]
   }
 }
 ```
 
 What this means:
 
-- this is the raw Open-Meteo response
-- it preserves the raw arrays and units needed for later feature engineering
-- it gives the forecasting pipeline exogenous weather context
+- this is the raw Open-Meteo forecast response
+- the `_2m` suffix means the variable is modelled at `2 metres` above ground
+- `wind_speed_10m` is modelled at `10 metres` above ground
+- `hourly.time` defines the forecast horizon timestamps
+- the raw arrays and units are preserved for later feature engineering and demand-alignment work
 
 Example ingestion manifest:
 
 S3 key:
 
 ```text
-bronze/ingestion-manifests/manifest/dt=2026-03-24/8c4d2e1f.json
+bronze/ingestion-manifests/manifest/dt=2026-03-24/a669c319-97a0-4ae9-9d3a-77284c842463.json
 ```
 
 Example content:
 
 ```json
 {
-  "request_id": "8c4d2e1f",
-  "event_time_utc": "2026-03-24T22:31:05.123456+00:00",
+  "request_id": "a669c319-97a0-4ae9-9d3a-77284c842463",
+  "event_time_utc": "2026-03-24T23:09:19.885542+00:00",
   "deployment_name": "energyops-dev-creative-antelope",
   "environment": "dev",
   "status": "success",
@@ -632,19 +714,21 @@ Example content:
     }
   },
   "event": {
-    "trigger": "eventbridge-scheduler",
-    "source": "ingestion"
+    "source": "ingestion",
+    "trigger": "eventbridge-scheduler"
   },
   "outputs": {
     "energy": {
       "source_name": "energy",
-      "s3_key": "bronze/raw/energy/dt=2026-03-24/8c4d2e1f.json",
+      "s3_key": "bronze/raw/energy/dt=2026-03-24/a669c319-97a0-4ae9-9d3a-77284c842463.json",
       "record_count": 1
     },
     "weather": {
       "source_name": "weather",
-      "s3_key": "bronze/raw/weather/dt=2026-03-24/8c4d2e1f.json",
-      "record_count": null
+      "s3_key": "bronze/raw/weather/dt=2026-03-24/a669c319-97a0-4ae9-9d3a-77284c842463.json",
+      "hourly_timestamp_count": 168,
+      "forecast_start_time": "2026-03-24T00:00",
+      "forecast_end_time": "2026-03-30T23:00"
     }
   }
 }
@@ -655,6 +739,7 @@ What this means:
 - it is the audit record for the ingestion run
 - it records the source configuration used
 - it records where the raw payloads were stored
+- for weather, it records the forecast horizon rather than an unhelpful null row count
 - it tells you whether the invocation succeeded or failed
 
 Example failed manifest shape:
