@@ -1,0 +1,8 @@
+aws_region            = "eu-west-2"
+deployment_name       = "energyops-dev-quiet-otter"
+kms_key_arn           = "arn:aws:kms:eu-west-2:123456789012:key/example"
+lakehouse_bucket_arn  = "arn:aws:s3:::dl-energyops-dev-quiet-otter"
+artefact_bucket_arn   = "arn:aws:s3:::mlops-artifacts-energyops-dev-quiet-otter"
+monitoring_bucket_arn = "arn:aws:s3:::monitoring-energyops-dev-quiet-otter"
+tags                  = {}
+
