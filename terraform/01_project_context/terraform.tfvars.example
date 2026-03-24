@@ -1,0 +1,9 @@
+aws_region      = "eu-west-2"
+environment     = "dev"
+project_name    = "Real-Time Energy Forecasting and Anomaly Detection"
+project_slug    = "energy-forecast"
+resource_prefix = "energyops"
+owner           = "portfolio"
+cost_centre     = "mlops-lab"
+extra_tags      = {}
+
