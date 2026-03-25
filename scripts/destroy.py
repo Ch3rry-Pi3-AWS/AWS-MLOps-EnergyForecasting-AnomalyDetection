@@ -11,15 +11,25 @@ Notes
 - Destroying a later module first avoids downstream references blocking the
   deletion of earlier modules.
 - Full destroy removes resources in this order:
- - Full destroy removes resources in this order:
 
-    1. Glue catalogue
-    2. EventBridge Scheduler
-    3. Lambda ingestion
-    4. IAM foundation
-    5. S3 lakehouse
-    6. KMS
-    7. Project context
+    1. Glue Bronze-to-Silver job
+    2. Glue catalogue
+    3. EventBridge Scheduler
+    4. Lambda ingestion
+    5. IAM foundation
+    6. S3 lakehouse
+    7. KMS
+    8. Project context
+
+Examples
+--------
+Destroy the full stack in reverse dependency order:
+
+>>> # python scripts/destroy.py
+
+Destroy only the Glue catalogue metadata:
+
+>>> # python scripts/destroy.py --glue-catalog-only
 """
 
 from __future__ import annotations
@@ -40,6 +50,10 @@ def run(cmd: list[str]) -> None:
     ----------
     cmd : list[str]
         Command and arguments to execute.
+
+    Examples
+    --------
+    >>> run(["python", "--version"])  # doctest: +SKIP
     """
 
     print("\n$ " + " ".join(cmd))
@@ -60,6 +74,11 @@ def run_capture(cmd: list[str]) -> str:
     str
         Standard output captured from the command, stripped of trailing
         whitespace.
+
+    Examples
+    --------
+    >>> run_capture(["python", "-c", "print('ok')"])  # doctest: +SKIP
+    'ok'
     """
 
     print("\n$ " + " ".join(cmd))
@@ -100,6 +119,11 @@ def load_env_file(path: Path) -> None:
     -----
     Existing environment variables are preserved so that explicit shell
     configuration always takes precedence over local file values.
+
+    Examples
+    --------
+    >>> from pathlib import Path
+    >>> load_env_file(Path(".env"))  # doctest: +SKIP
     """
 
     if not path.exists():
@@ -128,6 +152,13 @@ def hcl_value(value: object) -> str:
     -------
     str
         Rendered HCL literal.
+
+    Examples
+    --------
+    >>> hcl_value(False)
+    'false'
+    >>> hcl_value(["a", "b"])
+    '["a", "b"]'
     """
 
     if value is None:
@@ -256,6 +287,12 @@ def tf_state_exists(tf_dir: Path) -> bool:
     -------
     bool
         `True` if `terraform.tfstate` exists, otherwise `False`.
+
+    Examples
+    --------
+    >>> from pathlib import Path
+    >>> isinstance(tf_state_exists(Path(".")), bool)
+    True
     """
 
     return (tf_dir / "terraform.tfstate").exists()
@@ -463,6 +500,57 @@ def write_glue_catalog_tfvars(
     write_tfvars(glue_dir / "terraform.tfvars", items)
 
 
+def write_glue_bronze_silver_tfvars(
+    glue_job_dir: Path,
+    context: dict[str, object],
+    kms_key_arn: str,
+    glue_role_arn: str,
+    lakehouse_bucket_name: str,
+    artefact_bucket_name: str,
+    glue_database_name: str,
+    energy_table_name: str,
+    weather_table_name: str,
+) -> None:
+    """
+    Write the live variables file for the Glue Bronze-to-Silver job module.
+
+    Parameters
+    ----------
+    glue_job_dir : Path
+        Terraform directory for `08_glue_bronze_to_silver_job`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    kms_key_arn : str
+        KMS key ARN used to encrypt the uploaded Glue job script.
+    glue_role_arn : str
+        IAM role ARN assumed by the Glue job.
+    lakehouse_bucket_name : str
+        Name of the S3 lakehouse bucket that stores Bronze and Silver data.
+    artefact_bucket_name : str
+        Name of the S3 artefact bucket used for Glue scripts and temp data.
+    glue_database_name : str
+        Glue database name for the Bronze catalogue.
+    energy_table_name : str
+        Glue table name for the Bronze raw energy dataset.
+    weather_table_name : str
+        Glue table name for the Bronze raw weather dataset.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("kms_key_arn", kms_key_arn),
+        ("glue_role_arn", glue_role_arn),
+        ("lakehouse_bucket_name", lakehouse_bucket_name),
+        ("artefact_bucket_name", artefact_bucket_name),
+        ("glue_database_name", glue_database_name),
+        ("energy_table_name", energy_table_name),
+        ("weather_table_name", weather_table_name),
+        ("tags", context["standard_tags"]),
+    ]
+    write_tfvars(glue_job_dir / "terraform.tfvars", items)
+
+
 def destroy_stack(tf_dir: Path) -> None:
     """
     Destroy a Terraform module.
@@ -510,6 +598,7 @@ if __name__ == "__main__":
         group.add_argument("--lambda-only", action="store_true", help="Destroy only the ingestion Lambda stack")
         group.add_argument("--scheduler-only", action="store_true", help="Destroy only the EventBridge Scheduler stack")
         group.add_argument("--glue-catalog-only", action="store_true", help="Destroy only the Glue catalogue stack")
+        group.add_argument("--bronze-silver-only", action="store_true", help="Destroy only the Glue Bronze-to-Silver job")
         args = parser.parse_args()
 
         repo_root = Path(__file__).resolve().parent.parent
@@ -522,6 +611,7 @@ if __name__ == "__main__":
         lambda_dir = repo_root / "terraform" / "05_lambda_ingestion"
         scheduler_dir = repo_root / "terraform" / "06_eventbridge_scheduler"
         glue_catalog_dir = repo_root / "terraform" / "07_glue_catalog"
+        glue_bronze_silver_dir = repo_root / "terraform" / "08_glue_bronze_to_silver_job"
 
         if args.context_only:
             destroy_stack_if_state(context_dir)
@@ -604,6 +694,33 @@ if __name__ == "__main__":
             destroy_stack_if_state(glue_catalog_dir)
             sys.exit(0)
 
+        if args.bronze_silver_only:
+            context = load_context_outputs(context_dir)
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={s3_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            run(["terraform", f"-chdir={glue_catalog_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            glue_role_arn = get_output(iam_dir, "glue_role_arn")
+            lakehouse_bucket_name = get_output(s3_dir, "lakehouse_bucket_name")
+            artefact_bucket_name = get_output(s3_dir, "artefact_bucket_name")
+            glue_database_name = get_output(glue_catalog_dir, "glue_database_name")
+            energy_table_name = get_output(glue_catalog_dir, "energy_table_name")
+            weather_table_name = get_output(glue_catalog_dir, "weather_table_name")
+            write_glue_bronze_silver_tfvars(
+                glue_bronze_silver_dir,
+                context,
+                kms_key_arn,
+                glue_role_arn,
+                lakehouse_bucket_name,
+                artefact_bucket_name,
+                glue_database_name,
+                energy_table_name,
+                weather_table_name,
+            )
+            destroy_stack_if_state(glue_bronze_silver_dir)
+            sys.exit(0)
+
         context = None
         if tf_state_exists(context_dir):
             context = load_context_outputs(context_dir)
@@ -667,6 +784,38 @@ if __name__ == "__main__":
                 lakehouse_bucket_name,
             )
 
+        if (
+            context
+            and tf_state_exists(kms_dir)
+            and tf_state_exists(s3_dir)
+            and tf_state_exists(iam_dir)
+            and tf_state_exists(glue_catalog_dir)
+            and tf_state_exists(glue_bronze_silver_dir)
+        ):
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={s3_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            run(["terraform", f"-chdir={glue_catalog_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            glue_role_arn = get_output(iam_dir, "glue_role_arn")
+            lakehouse_bucket_name = get_output(s3_dir, "lakehouse_bucket_name")
+            artefact_bucket_name = get_output(s3_dir, "artefact_bucket_name")
+            glue_database_name = get_output(glue_catalog_dir, "glue_database_name")
+            energy_table_name = get_output(glue_catalog_dir, "energy_table_name")
+            weather_table_name = get_output(glue_catalog_dir, "weather_table_name")
+            write_glue_bronze_silver_tfvars(
+                glue_bronze_silver_dir,
+                context,
+                kms_key_arn,
+                glue_role_arn,
+                lakehouse_bucket_name,
+                artefact_bucket_name,
+                glue_database_name,
+                energy_table_name,
+                weather_table_name,
+            )
+
+        destroy_stack_if_state(glue_bronze_silver_dir)
         destroy_stack_if_state(glue_catalog_dir)
         destroy_stack_if_state(scheduler_dir)
         destroy_stack_if_state(lambda_dir)

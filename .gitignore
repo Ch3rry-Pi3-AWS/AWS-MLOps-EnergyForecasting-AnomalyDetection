@@ -6,6 +6,7 @@
 .terraform/
 *.tfstate
 *.tfstate.*
+terraform/**/lambda_ingestion.zip
 .venv/
 venv/
 __pycache__/

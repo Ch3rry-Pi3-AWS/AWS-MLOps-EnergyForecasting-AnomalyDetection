@@ -9,6 +9,14 @@ project. On each invocation, it fetches:
 The raw JSON payloads are written into the Bronze layer of the lakehouse and
 an ingestion manifest is written alongside them so each invocation is
 auditable.
+
+Examples
+--------
+The handler writes:
+
+- one raw Elexon JSON object
+- one raw Open-Meteo JSON object
+- one manifest JSON object describing the invocation
 """
 
 from __future__ import annotations
@@ -52,6 +60,11 @@ def _join_url(base_url: str, path: str) -> str:
     -------
     str
         Combined URL.
+
+    Examples
+    --------
+    >>> _join_url("https://data.elexon.co.uk/", "/bmrs/api/v1/datasets/ITSDO")
+    'https://data.elexon.co.uk/bmrs/api/v1/datasets/ITSDO'
     """
 
     return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
@@ -98,6 +111,11 @@ def _build_partitioned_s3_key(prefix: str, source_name: str, request_id: str, ev
     -------
     str
         Partitioned S3 key in the form `<prefix>/<source>/dt=<date>/<request>.json`.
+
+    Examples
+    --------
+    >>> _build_partitioned_s3_key("bronze/raw", "energy", "req-1", "2026-03-24T22:30:00+00:00")
+    'bronze/raw/energy/dt=2026-03-24/req-1.json'
     """
 
     date_key = event_time_utc[:10]
@@ -203,6 +221,11 @@ def _build_source_record(source_name: str, key: str, payload: dict[str, Any]) ->
     -------
     dict[str, Any]
         Manifest record describing the stored source object.
+
+    Examples
+    --------
+    >>> _build_source_record("energy", "bronze/raw/energy/x.json", {"data": [{"demand": 1}]})
+    {'source_name': 'energy', 's3_key': 'bronze/raw/energy/x.json', 'record_count': 1}
     """
 
     record = {
@@ -292,6 +315,12 @@ def handler(event: dict[str, Any], context: object) -> dict[str, Any]:
     - one raw Elexon payload
     - one raw Open-Meteo payload
     - one manifest describing the invocation and both object locations
+
+    Examples
+    --------
+    The returned payload includes the manifest key and the raw object keys:
+
+    >>> # handler({"trigger": "manual"}, context)  # doctest: +SKIP
     """
 
     event_time_utc = _utc_now().isoformat()

@@ -1,3 +1,12 @@
+"""Tests for the lightweight ingestion Lambda helper functions.
+
+Examples
+--------
+Run just this test module locally:
+
+>>> # pytest tests/test_lambda_ingestion.py
+"""
+
 from __future__ import annotations
 
 import importlib.util
@@ -5,6 +14,8 @@ from pathlib import Path
 
 
 def _load_lambda_module():
+    """Import the Lambda module directly from its file path for local tests."""
+
     module_path = Path(__file__).resolve().parent.parent / "lambda" / "ingestion" / "app.py"
     spec = importlib.util.spec_from_file_location("lambda_ingestion_app", module_path)
     module = importlib.util.module_from_spec(spec)
@@ -15,6 +26,8 @@ def _load_lambda_module():
 
 
 def test_join_url_normalises_slashes():
+    """Check that URL joining does not duplicate path separators."""
+
     module = _load_lambda_module()
 
     result = module._join_url("https://data.elexon.co.uk/", "/bmrs/api/v1/datasets/ITSDO")
@@ -23,6 +36,8 @@ def test_join_url_normalises_slashes():
 
 
 def test_build_partitioned_s3_key_uses_source_and_date():
+    """Check that Bronze object keys preserve source name and ingestion date."""
+
     module = _load_lambda_module()
 
     result = module._build_partitioned_s3_key(
@@ -36,6 +51,8 @@ def test_build_partitioned_s3_key_uses_source_and_date():
 
 
 def test_build_source_record_counts_elexon_rows():
+    """Check that energy source records capture the Elexon row count."""
+
     module = _load_lambda_module()
 
     result = module._build_source_record(
@@ -52,6 +69,8 @@ def test_build_source_record_counts_elexon_rows():
 
 
 def test_build_source_record_summarises_weather_horizon():
+    """Check that weather source records summarise the returned forecast horizon."""
+
     module = _load_lambda_module()
 
     result = module._build_source_record(

@@ -12,7 +12,6 @@ Notes
 - Each module receives a generated `terraform.tfvars` file immediately
   before deployment.
 - The script deliberately deploys modules in dependency order:
- - The script deliberately deploys modules in dependency order:
 
     1. Project context
     2. KMS
@@ -21,10 +20,21 @@ Notes
     5. Lambda ingestion
     6. EventBridge Scheduler
     7. Glue catalogue
+    8. Glue Bronze-to-Silver job
 
 - Full deployment applies every module in sequence.
 - Targeted deployment flags only apply the named module, assuming its
   upstream dependencies have already been deployed.
+
+Examples
+--------
+Deploy the full stack built so far:
+
+>>> # python scripts/deploy.py
+
+Deploy only the Bronze-to-Silver Glue job after its dependencies exist:
+
+>>> # python scripts/deploy.py --bronze-silver-only
 """
 
 from __future__ import annotations
@@ -55,6 +65,10 @@ def run(cmd: list[str]) -> None:
     ----------
     cmd : list[str]
         Command and arguments to execute.
+
+    Examples
+    --------
+    >>> run(["python", "--version"])  # doctest: +SKIP
     """
 
     print("\n$ " + " ".join(cmd))
@@ -75,6 +89,11 @@ def run_capture(cmd: list[str]) -> str:
     str
         Standard output captured from the command, stripped of trailing
         whitespace.
+
+    Examples
+    --------
+    >>> run_capture(["python", "-c", "print('ok')"])  # doctest: +SKIP
+    'ok'
     """
 
     print("\n$ " + " ".join(cmd))
@@ -117,6 +136,11 @@ def load_env_file(path: Path) -> None:
     - Blank lines and comments are ignored.
     - The parser is intentionally simple because the project only needs
       straightforward `KEY=value` pairs.
+
+    Examples
+    --------
+    >>> from pathlib import Path
+    >>> load_env_file(Path(".env"))  # doctest: +SKIP
     """
 
     if not path.exists():
@@ -153,6 +177,13 @@ def hcl_value(value: object) -> str:
     -----
     This helper only supports the value shapes used by this repository:
     scalars, dictionaries, and simple lists or tuples.
+
+    Examples
+    --------
+    >>> hcl_value(True)
+    'true'
+    >>> hcl_value({"Environment": "dev"})
+    '{ Environment = "dev" }'
     """
 
     if value is None:
@@ -307,6 +338,11 @@ def build_context_defaults() -> dict[str, str]:
     -------
     dict[str, str]
         Context values consumed by the project context module.
+
+    Examples
+    --------
+    >>> "aws_region" in build_context_defaults()
+    True
     """
 
     return {
@@ -551,6 +587,57 @@ def write_glue_catalog_tfvars(
     write_tfvars(glue_dir / "terraform.tfvars", items)
 
 
+def write_glue_bronze_silver_tfvars(
+    glue_job_dir: Path,
+    context: dict[str, object],
+    kms_key_arn: str,
+    glue_role_arn: str,
+    lakehouse_bucket_name: str,
+    artefact_bucket_name: str,
+    glue_database_name: str,
+    energy_table_name: str,
+    weather_table_name: str,
+) -> None:
+    """
+    Write the live variables file for the Glue Bronze-to-Silver job module.
+
+    Parameters
+    ----------
+    glue_job_dir : Path
+        Terraform directory for `08_glue_bronze_to_silver_job`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    kms_key_arn : str
+        KMS key ARN used to encrypt the uploaded Glue job script.
+    glue_role_arn : str
+        IAM role ARN assumed by the Glue job.
+    lakehouse_bucket_name : str
+        Name of the S3 lakehouse bucket that stores Bronze and Silver data.
+    artefact_bucket_name : str
+        Name of the S3 artefact bucket used for Glue scripts and temp data.
+    glue_database_name : str
+        Glue database name for the Bronze catalogue.
+    energy_table_name : str
+        Glue table name for the Bronze raw energy dataset.
+    weather_table_name : str
+        Glue table name for the Bronze raw weather dataset.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("kms_key_arn", kms_key_arn),
+        ("glue_role_arn", glue_role_arn),
+        ("lakehouse_bucket_name", lakehouse_bucket_name),
+        ("artefact_bucket_name", artefact_bucket_name),
+        ("glue_database_name", glue_database_name),
+        ("energy_table_name", energy_table_name),
+        ("weather_table_name", weather_table_name),
+        ("tags", context["standard_tags"]),
+    ]
+    write_tfvars(glue_job_dir / "terraform.tfvars", items)
+
+
 def deploy_stack(tf_dir: Path) -> None:
     """
     Initialise and apply a Terraform module.
@@ -588,6 +675,7 @@ if __name__ == "__main__":
         group.add_argument("--lambda-only", action="store_true", help="Deploy only the ingestion Lambda stack")
         group.add_argument("--scheduler-only", action="store_true", help="Deploy only the EventBridge Scheduler stack")
         group.add_argument("--glue-catalog-only", action="store_true", help="Deploy only the Glue catalogue stack")
+        group.add_argument("--bronze-silver-only", action="store_true", help="Deploy only the Glue Bronze-to-Silver job")
         args = parser.parse_args()
 
         repo_root = Path(__file__).resolve().parent.parent
@@ -600,6 +688,7 @@ if __name__ == "__main__":
         lambda_dir = repo_root / "terraform" / "05_lambda_ingestion"
         scheduler_dir = repo_root / "terraform" / "06_eventbridge_scheduler"
         glue_catalog_dir = repo_root / "terraform" / "07_glue_catalog"
+        glue_bronze_silver_dir = repo_root / "terraform" / "08_glue_bronze_to_silver_job"
 
         if args.context_only:
             write_context_tfvars(context_dir)
@@ -683,6 +772,33 @@ if __name__ == "__main__":
             deploy_stack(glue_catalog_dir)
             sys.exit(0)
 
+        if args.bronze_silver_only:
+            context = load_context_outputs(context_dir)
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={s3_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            run(["terraform", f"-chdir={glue_catalog_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            glue_role_arn = get_output(iam_dir, "glue_role_arn")
+            lakehouse_bucket_name = get_output(s3_dir, "lakehouse_bucket_name")
+            artefact_bucket_name = get_output(s3_dir, "artefact_bucket_name")
+            glue_database_name = get_output(glue_catalog_dir, "glue_database_name")
+            energy_table_name = get_output(glue_catalog_dir, "energy_table_name")
+            weather_table_name = get_output(glue_catalog_dir, "weather_table_name")
+            write_glue_bronze_silver_tfvars(
+                glue_bronze_silver_dir,
+                context,
+                kms_key_arn,
+                glue_role_arn,
+                lakehouse_bucket_name,
+                artefact_bucket_name,
+                glue_database_name,
+                energy_table_name,
+                weather_table_name,
+            )
+            deploy_stack(glue_bronze_silver_dir)
+            sys.exit(0)
+
         write_context_tfvars(context_dir)
         deploy_stack(context_dir)
         context = load_context_outputs(context_dir)
@@ -732,6 +848,23 @@ if __name__ == "__main__":
             lakehouse_bucket_name,
         )
         deploy_stack(glue_catalog_dir)
+        glue_database_name = get_output(glue_catalog_dir, "glue_database_name")
+        energy_table_name = get_output(glue_catalog_dir, "energy_table_name")
+        weather_table_name = get_output(glue_catalog_dir, "weather_table_name")
+        artefact_bucket_name = get_output(s3_dir, "artefact_bucket_name")
+        glue_role_arn = get_output(iam_dir, "glue_role_arn")
+        write_glue_bronze_silver_tfvars(
+            glue_bronze_silver_dir,
+            context,
+            kms_key_arn,
+            glue_role_arn,
+            lakehouse_bucket_name,
+            artefact_bucket_name,
+            glue_database_name,
+            energy_table_name,
+            weather_table_name,
+        )
+        deploy_stack(glue_bronze_silver_dir)
 
     except subprocess.CalledProcessError as exc:
         print(f"Command failed: {exc}")

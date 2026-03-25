@@ -1,0 +1,17 @@
+aws_region          = "us-east-1"
+deployment_name     = "energyops-dev-creative-antelope"
+kms_key_arn         = "arn:aws:kms:us-east-1:123456789012:key/example"
+glue_role_arn       = "arn:aws:iam::123456789012:role/iam-glue-energyops-dev-creative-antelope"
+lakehouse_bucket_name = "dl-energyops-dev-creative-antelope"
+artefact_bucket_name  = "mlops-artifacts-energyops-dev-creative-antelope"
+glue_database_name    = "glue_bronze_energyops_dev_creative_antelope"
+energy_table_name     = "bronze_energy_energyops_dev_creative_antelope"
+weather_table_name    = "bronze_weather_energyops_dev_creative_antelope"
+silver_energy_prefix  = "silver/energy"
+silver_weather_prefix = "silver/weather"
+
+tags = {
+  Project     = "Real-Time Energy Forecasting and Anomaly Detection"
+  Environment = "dev"
+  ManagedBy   = "terraform"
+}

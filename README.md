@@ -11,7 +11,8 @@ This repository currently covers:
 5. a real ingestion Lambda that fetches public Elexon and Open-Meteo data
 6. EventBridge Scheduler orchestration for recurring ingestion
 7. a Glue catalogue database and Bronze external tables
-8. helper deploy and destroy scripts that auto-wire Terraform outputs forward
+8. a Glue Bronze-to-Silver transformation job
+9. helper deploy and destroy scripts that auto-wire Terraform outputs forward
 
 ## Table Of Contents
 
@@ -62,6 +63,8 @@ What exists now:
   creates a recurring schedule that invokes the ingestion Lambda every 30 minutes by default
 - `terraform/07_glue_catalog`
   registers the Bronze raw energy, weather, and ingestion-manifest locations in the Glue Data Catalog
+- `terraform/08_glue_bronze_to_silver_job`
+  uploads the Glue ETL script and creates the first Bronze-to-Silver transformation job
 
 The ingestion path is now real rather than placeholder-only.
 
@@ -102,6 +105,9 @@ flowchart LR
     G --> J
     H --> J
     I --> J
+    J --> K[Glue Bronze-to-Silver job]
+    K --> L[Silver energy Parquet]
+    K --> M[Silver weather Parquet]
 ```
 
 Current Bronze ingestion data flow:
@@ -144,6 +150,9 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |-- lambda/
 |   `-- ingestion/
 |       `-- app.py
+|-- glue/
+|   `-- jobs/
+|       `-- bronze_to_silver.py
 |-- scripts/
 |   |-- deploy.py
 |   `-- destroy.py
@@ -200,7 +209,13 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |       |-- outputs.tf
 |       |-- terraform.tfvars.example
 |       `-- variables.tf
+|   `-- 08_glue_bronze_to_silver_job/
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- terraform.tfvars.example
+|       `-- variables.tf
 |-- tests/
+|   |-- test_bronze_to_silver_job.py
 |   |-- test_lambda_ingestion.py
 |   |-- test_public_sources.py
 |   `-- test_settings.py
@@ -232,6 +247,10 @@ Current core files:
   creates the recurring scheduler and Lambda invocation permission
 - `terraform/07_glue_catalog/main.tf`
   registers the Bronze S3 locations as Glue database tables for downstream transformation work
+- `terraform/08_glue_bronze_to_silver_job/main.tf`
+  uploads the Glue ETL script and creates the first Silver transformation job
+- `glue/jobs/bronze_to_silver.py`
+  reads Bronze catalogue tables, flattens the raw structures, and writes Silver Parquet datasets
 
 The README is the canonical setup and usage guide.
 
@@ -417,6 +436,7 @@ The current module dependency chain is:
 5. `05_lambda_ingestion`
 6. `06_eventbridge_scheduler`
 7. `07_glue_catalog`
+8. `08_glue_bronze_to_silver_job`
 
 Why this order matters:
 
@@ -426,6 +446,7 @@ Why this order matters:
 - Lambda depends on IAM, S3, and KMS
 - Scheduler depends on the Lambda name and ARN
 - Glue catalogue depends on the lakehouse bucket name and Bronze prefix conventions
+- Glue Bronze-to-Silver depends on KMS, the Glue role, lakehouse and artefact buckets, and Bronze catalogue table names
 
 The deploy script handles that handoff automatically.
 
@@ -448,6 +469,7 @@ Example Terraform example-variable files currently in the repo:
 - `terraform/05_lambda_ingestion/terraform.tfvars.example`
 - `terraform/06_eventbridge_scheduler/terraform.tfvars.example`
 - `terraform/07_glue_catalog/terraform.tfvars.example`
+- `terraform/08_glue_bronze_to_silver_job/terraform.tfvars.example`
 
 </details>
 
@@ -472,6 +494,7 @@ python scripts\deploy.py --iam-only
 python scripts\deploy.py --lambda-only
 python scripts\deploy.py --scheduler-only
 python scripts\deploy.py --glue-catalog-only
+python scripts\deploy.py --bronze-silver-only
 ```
 
 Expected targeted deploy order:
@@ -484,6 +507,7 @@ python scripts\deploy.py --iam-only
 python scripts\deploy.py --lambda-only
 python scripts\deploy.py --scheduler-only
 python scripts\deploy.py --glue-catalog-only
+python scripts\deploy.py --bronze-silver-only
 ```
 
 Destroy everything built so far:
@@ -495,6 +519,7 @@ python scripts\destroy.py
 Destroy individual modules:
 
 ```powershell
+python scripts\destroy.py --bronze-silver-only
 python scripts\destroy.py --scheduler-only
 python scripts\destroy.py --glue-catalog-only
 python scripts\destroy.py --lambda-only
@@ -666,6 +691,21 @@ So:
 
 The same idea applies to the Elexon `data` array. Bronze stores the original
 `data` list, while Silver will likely expand it into one row per demand record.
+
+### What the Bronze-to-Silver job now does
+
+The current Glue transformation job reads the Bronze energy and weather tables
+from the catalogue and writes two Silver datasets:
+
+- `silver/energy/`
+  one row per settlement interval, with flattened Elexon fields such as
+  settlement period, interval timestamps, and demand in megawatts
+- `silver/weather/`
+  one row per forecast timestamp, with flattened weather values such as
+  temperature, humidity, and wind speed
+
+The Silver outputs are written as Parquet rather than raw JSON. That makes
+them smaller, faster to query, and more appropriate for downstream modelling.
 
 </details>
 
@@ -925,12 +965,13 @@ terraform -chdir=terraform/04_iam_foundation validate
 terraform -chdir=terraform/05_lambda_ingestion validate
 terraform -chdir=terraform/06_eventbridge_scheduler validate
 terraform -chdir=terraform/07_glue_catalog validate
+terraform -chdir=terraform/08_glue_bronze_to_silver_job validate
 ```
 
 Python checks:
 
 ```powershell
-python -m py_compile scripts\deploy.py scripts\destroy.py lambda\ingestion\app.py
+python -m py_compile scripts\deploy.py scripts\destroy.py lambda\ingestion\app.py glue\jobs\bronze_to_silver.py
 python -m pytest
 ```
 
@@ -984,13 +1025,13 @@ Current implemented scope:
 - real Lambda ingestion for energy and weather raw data
 - scheduled orchestration with EventBridge Scheduler
 - Glue catalogue registration for Bronze raw datasets and manifests
+- first Bronze-to-Silver Glue transformation job
 
 Recommended next steps:
 
-1. `08_glue_bronze_to_silver_job`
-   clean and standardise the raw energy and weather data
-2. `09_glue_silver_to_gold_job`
+1. `09_glue_silver_to_gold_job`
    create model-ready and analytics-ready Gold outputs
+2. schedule or trigger the Bronze-to-Silver job automatically
 3. SageMaker training and model registration
 4. endpoint deployment and monitoring
 
