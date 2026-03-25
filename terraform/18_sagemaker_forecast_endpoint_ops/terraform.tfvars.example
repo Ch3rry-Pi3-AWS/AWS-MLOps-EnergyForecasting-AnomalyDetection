@@ -1,0 +1,14 @@
+aws_region                    = "eu-west-2"
+deployment_name               = "energyops-dev-creative-antelope"
+forecast_endpoint_name        = "energyops-dev-creative-antelope-forecast-endpoint"
+forecast_endpoint_variant_name = "AllTraffic"
+
+# Optional overrides
+# min_instance_count = 1
+# max_instance_count = 3
+# target_invocations_per_instance = 50
+# scale_in_cooldown_seconds = 300
+# scale_out_cooldown_seconds = 120
+# model_latency_threshold_microseconds = 1000000
+# alarm_actions = ["arn:aws:sns:eu-west-2:123456789012:mlops-alerts"]
+# ok_actions = ["arn:aws:sns:eu-west-2:123456789012:mlops-alerts"]

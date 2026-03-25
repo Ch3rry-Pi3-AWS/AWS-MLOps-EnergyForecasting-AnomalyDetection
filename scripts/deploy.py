@@ -30,6 +30,8 @@ Notes
     15. SageMaker anomaly training assets
     16. SageMaker forecast endpoint configuration
     17. SageMaker anomaly endpoint configuration
+    18. SageMaker forecast endpoint operations
+    19. SageMaker model evaluation
 
 - Full deployment applies every module in sequence.
 - Targeted deployment flags only apply the named module, assuming its
@@ -80,6 +82,15 @@ Deploy only the forecast-endpoint configuration after model registry exists:
 Deploy only the anomaly-endpoint configuration after model registry exists:
 
 >>> # python scripts/deploy.py --anomaly-endpoint-only
+
+Deploy only the forecast-endpoint operations stage after the endpoint exists:
+
+>>> # python scripts/deploy.py --forecast-endpoint-ops-only
+
+Deploy only the model-evaluation configuration stage after model registry and
+artefact storage exist:
+
+>>> # python scripts/deploy.py --model-evaluation-only
 """
 
 from __future__ import annotations
@@ -990,6 +1001,74 @@ def write_anomaly_endpoint_tfvars(
     write_tfvars(endpoint_dir / "terraform.tfvars", items)
 
 
+def write_forecast_endpoint_ops_tfvars(
+    ops_dir: Path,
+    context: dict[str, object],
+    forecast_endpoint_name: str,
+    forecast_endpoint_variant_name: str,
+) -> None:
+    """
+    Write the live variables file for the forecast-endpoint operations module.
+
+    Parameters
+    ----------
+    ops_dir : Path
+        Terraform directory for `18_sagemaker_forecast_endpoint_ops`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    forecast_endpoint_name : str
+        Stable forecast endpoint name created by the endpoint deployment runner.
+    forecast_endpoint_variant_name : str
+        Production variant name exposed by the forecast-endpoint configuration stage.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("forecast_endpoint_name", forecast_endpoint_name),
+        ("forecast_endpoint_variant_name", forecast_endpoint_variant_name),
+    ]
+    write_tfvars(ops_dir / "terraform.tfvars", items)
+
+
+def write_model_evaluation_tfvars(
+    evaluation_dir: Path,
+    context: dict[str, object],
+    kms_key_arn: str,
+    artefact_bucket_name: str,
+    forecast_model_package_group_name: str,
+    anomaly_model_package_group_name: str,
+) -> None:
+    """
+    Write the live variables file for the SageMaker model-evaluation module.
+
+    Parameters
+    ----------
+    evaluation_dir : Path
+        Terraform directory for `19_sagemaker_model_evaluation`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    kms_key_arn : str
+        KMS key ARN used to encrypt uploaded evaluation reports.
+    artefact_bucket_name : str
+        Artefact bucket name used to store evaluation reports.
+    forecast_model_package_group_name : str
+        Forecast model package group name consumed by the evaluation runner.
+    anomaly_model_package_group_name : str
+        Anomaly model package group name consumed by the evaluation runner.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("artefact_bucket_name", artefact_bucket_name),
+        ("kms_key_arn", kms_key_arn),
+        ("forecast_model_package_group_name", forecast_model_package_group_name),
+        ("anomaly_model_package_group_name", anomaly_model_package_group_name),
+    ]
+    write_tfvars(evaluation_dir / "terraform.tfvars", items)
+
+
 def deploy_stack(tf_dir: Path) -> None:
     """
     Initialise and apply a Terraform module.
@@ -1045,6 +1124,8 @@ if __name__ == "__main__":
         group.add_argument("--anomaly-training-only", action="store_true", help="Deploy only the SageMaker anomaly training asset stack")
         group.add_argument("--forecast-endpoint-only", action="store_true", help="Deploy only the SageMaker forecast endpoint configuration stack")
         group.add_argument("--anomaly-endpoint-only", action="store_true", help="Deploy only the SageMaker anomaly endpoint configuration stack")
+        group.add_argument("--forecast-endpoint-ops-only", action="store_true", help="Deploy only the SageMaker forecast endpoint monitoring and autoscaling stack")
+        group.add_argument("--model-evaluation-only", action="store_true", help="Deploy only the SageMaker model-evaluation configuration stack")
         args = parser.parse_args()
 
         repo_root = Path(__file__).resolve().parent.parent
@@ -1067,6 +1148,8 @@ if __name__ == "__main__":
         anomaly_training_dir = repo_root / "terraform" / "15_sagemaker_anomaly_training"
         forecast_endpoint_dir = repo_root / "terraform" / "16_sagemaker_forecast_endpoint"
         anomaly_endpoint_dir = repo_root / "terraform" / "17_sagemaker_anomaly_endpoint"
+        forecast_endpoint_ops_dir = repo_root / "terraform" / "18_sagemaker_forecast_endpoint_ops"
+        model_evaluation_dir = repo_root / "terraform" / "19_sagemaker_model_evaluation"
 
         if args.context_only:
             write_context_tfvars(context_dir)
@@ -1328,6 +1411,40 @@ if __name__ == "__main__":
             deploy_stack(anomaly_endpoint_dir)
             sys.exit(0)
 
+        if args.forecast_endpoint_ops_only:
+            context = load_context_outputs(context_dir)
+            run(["terraform", f"-chdir={forecast_endpoint_dir}", "init"])
+            forecast_endpoint_name = get_output(forecast_endpoint_dir, "forecast_endpoint_name")
+            forecast_endpoint_variant_name = get_output(forecast_endpoint_dir, "forecast_endpoint_variant_name")
+            write_forecast_endpoint_ops_tfvars(
+                forecast_endpoint_ops_dir,
+                context,
+                forecast_endpoint_name,
+                forecast_endpoint_variant_name,
+            )
+            deploy_stack(forecast_endpoint_ops_dir)
+            sys.exit(0)
+
+        if args.model_evaluation_only:
+            context = load_context_outputs(context_dir)
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={s3_dir}", "init"])
+            run(["terraform", f"-chdir={model_registry_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            artefact_bucket_name = get_output(s3_dir, "artefact_bucket_name")
+            forecast_model_package_group_name = get_output(model_registry_dir, "forecast_model_package_group_name")
+            anomaly_model_package_group_name = get_output(model_registry_dir, "anomaly_model_package_group_name")
+            write_model_evaluation_tfvars(
+                model_evaluation_dir,
+                context,
+                kms_key_arn,
+                artefact_bucket_name,
+                forecast_model_package_group_name,
+                anomaly_model_package_group_name,
+            )
+            deploy_stack(model_evaluation_dir)
+            sys.exit(0)
+
         write_context_tfvars(context_dir)
         deploy_stack(context_dir)
         context = load_context_outputs(context_dir)
@@ -1467,6 +1584,22 @@ if __name__ == "__main__":
             get_output(model_registry_dir, "anomaly_model_package_group_name"),
         )
         deploy_stack(anomaly_endpoint_dir)
+        write_forecast_endpoint_ops_tfvars(
+            forecast_endpoint_ops_dir,
+            context,
+            get_output(forecast_endpoint_dir, "forecast_endpoint_name"),
+            get_output(forecast_endpoint_dir, "forecast_endpoint_variant_name"),
+        )
+        deploy_stack(forecast_endpoint_ops_dir)
+        write_model_evaluation_tfvars(
+            model_evaluation_dir,
+            context,
+            kms_key_arn,
+            artefact_bucket_name,
+            get_output(model_registry_dir, "forecast_model_package_group_name"),
+            get_output(model_registry_dir, "anomaly_model_package_group_name"),
+        )
+        deploy_stack(model_evaluation_dir)
 
     except subprocess.CalledProcessError as exc:
         print(f"Command failed: {exc}")

@@ -193,10 +193,12 @@ flowchart LR
     X --> Y[SageMaker anomaly registry]
     U[SageMaker Studio domain] --> T
     U --> Y
-    T --> Z[Approved forecast model package]
+    T --> V[Model evaluation runner]
+    Y --> V
+    V --> Z[Approved forecast model package]
+    V --> AC[Approved anomaly model package]
     Z --> AA[Forecast endpoint runner]
     AA --> AB[SageMaker forecast endpoint]
-    Y --> AC[Approved anomaly model package]
     AC --> AD[Anomaly endpoint runner]
     AD --> AE[SageMaker anomaly endpoint]
 ```
@@ -259,6 +261,7 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |   |-- deploy_anomaly_endpoint.py
 |   |-- deploy_forecast_endpoint.py
 |   |-- destroy.py
+|   |-- evaluate_model_package.py
 |   |-- invoke_anomaly_endpoint.py
 |   |-- invoke_forecast_endpoint.py
 |   |-- run_anomaly_training.py
@@ -274,6 +277,7 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |       |   `-- public_sources.py
 |       |-- ml/
 |       |   |-- __init__.py
+|       |   |-- evaluation.py
 |       |   `-- pipeline.py
 |       |-- orchestration/
 |       |   `-- __init__.py
@@ -371,9 +375,15 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |       |-- outputs.tf
 |       |-- terraform.tfvars.example
 |       `-- variables.tf
+|   `-- 19_sagemaker_model_evaluation/
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- terraform.tfvars.example
+|       `-- variables.tf
 |-- tests/
 |   |-- test_bronze_to_silver_job.py
 |   |-- test_lambda_ingestion.py
+|   |-- test_model_evaluation.py
 |   |-- test_ml_pipeline.py
 |   |-- test_public_sources.py
 |   |-- test_settings.py
@@ -398,6 +408,8 @@ Current core files:
   resolves the latest approved forecast model package and deploys or updates the stable SageMaker endpoint
 - `scripts/deploy_anomaly_endpoint.py`
   resolves the latest approved anomaly model package and deploys or updates the stable SageMaker endpoint
+- `scripts/evaluate_model_package.py`
+  evaluates a forecast or anomaly model package against Terraform-managed thresholds, writes a JSON report to S3, and can optionally approve the package
 - `scripts/invoke_forecast_endpoint.py`
   sends a JSON payload to the deployed forecast endpoint so the serving contract can be tested from the command line
 - `scripts/invoke_anomaly_endpoint.py`
@@ -412,6 +424,8 @@ Current core files:
   provisions the S3 lakehouse, artefact, and monitoring buckets
 - `terraform/04_iam_foundation/main.tf`
   provisions base IAM roles for Lambda, Glue, and SageMaker
+- `terraform/19_sagemaker_model_evaluation/main.tf`
+  exposes model-evaluation thresholds and S3 report locations for package promotion reviews
 - `terraform/05_lambda_ingestion/main.tf`
   packages and deploys the ingestion Lambda
 - `terraform/06_eventbridge_scheduler/main.tf`
@@ -904,6 +918,24 @@ Deploy forecast endpoint monitoring and autoscaling after the endpoint already e
 python scripts\deploy.py --forecast-endpoint-ops-only
 ```
 
+Deploy the model-evaluation configuration stage:
+
+```powershell
+python scripts\deploy.py --model-evaluation-only
+```
+
+Evaluate the latest forecast model package against the configured thresholds:
+
+```powershell
+uv run python scripts\evaluate_model_package.py --model-family forecast
+```
+
+Evaluate the latest anomaly model package and approve it automatically if it passes:
+
+```powershell
+uv run python scripts\evaluate_model_package.py --model-family anomaly --approve-if-pass
+```
+
 Important endpoint note:
 
 - the runner deploys the latest **approved** forecast model package, not just
@@ -913,6 +945,17 @@ Important endpoint note:
 - approve the desired forecast package in Studio or via the SageMaker API
   before deploying the endpoint
 - the same approval rule applies to anomaly endpoint deployment
+
+Important evaluation note:
+
+- `terraform/19_sagemaker_model_evaluation` keeps promotion thresholds and
+  report prefixes declarative
+- `scripts/evaluate_model_package.py` reads the `evaluation.json` written by
+  the SageMaker training job, writes a structured report to S3, and can
+  optionally change the package to `Approved`
+- this gives the project a formal review layer between model registration and
+  endpoint deployment instead of relying on approval with no recorded
+  evaluation evidence
 
 If you want the full SageMaker UI path to work cleanly, the practical order is:
 
@@ -1111,6 +1154,14 @@ The first endpoint-operations stage is forecast-specific:
    - `Invocation5XXErrors`
    - `Invocation4XXErrors`
 3. the autoscaling policy uses the built-in SageMaker target metric `SageMakerVariantInvocationsPerInstance`
+
+The first model-evaluation stage sits between registration and deployment:
+
+1. `terraform/19_sagemaker_model_evaluation` exposes the promotion thresholds and report prefixes
+2. `scripts/evaluate_model_package.py` resolves a forecast or anomaly model package
+3. the runner loads the `evaluation.json` saved by the originating SageMaker training job
+4. it evaluates those metrics against the configured thresholds and writes a structured JSON report to S3
+5. it can optionally approve the package when every threshold check passes
 
 That separation matters because:
 
@@ -1702,12 +1753,13 @@ terraform -chdir=terraform/15_sagemaker_anomaly_training validate
 terraform -chdir=terraform/16_sagemaker_forecast_endpoint validate
 terraform -chdir=terraform/17_sagemaker_anomaly_endpoint validate
 terraform -chdir=terraform/18_sagemaker_forecast_endpoint_ops validate
+terraform -chdir=terraform/19_sagemaker_model_evaluation validate
 ```
 
 Python checks:
 
 ```powershell
-uv run python -m py_compile scripts\deploy.py scripts\destroy.py scripts\run_forecast_training.py scripts\run_anomaly_training.py scripts\deploy_forecast_endpoint.py scripts\deploy_anomaly_endpoint.py scripts\invoke_forecast_endpoint.py scripts\invoke_anomaly_endpoint.py lambda\ingestion\app.py glue\jobs\bronze_to_silver.py glue\jobs\silver_to_gold.py sagemaker/forecast_training/train.py sagemaker/forecast_training/inference.py sagemaker/anomaly_training/train.py sagemaker/anomaly_training/inference.py
+uv run python -m py_compile scripts\deploy.py scripts\destroy.py scripts\run_forecast_training.py scripts\run_anomaly_training.py scripts\deploy_forecast_endpoint.py scripts\deploy_anomaly_endpoint.py scripts\invoke_forecast_endpoint.py scripts\invoke_anomaly_endpoint.py scripts\evaluate_model_package.py lambda\ingestion\app.py glue\jobs\bronze_to_silver.py glue\jobs\silver_to_gold.py sagemaker/forecast_training/train.py sagemaker/forecast_training/inference.py sagemaker/anomaly_training/train.py sagemaker/anomaly_training/inference.py
 uv run pytest
 ```
 
@@ -1754,6 +1806,8 @@ aws sagemaker list-domains --query "Domains[?contains(DomainName, 'energyops')].
 - If the SageMaker anomaly-training container fails while importing `pandas` or `numpy`, apply the same rule to `sagemaker/anomaly_training/requirements.txt`, because it uses the same scikit-learn image family.
 - If `scripts/run_forecast_training.py` says a forecast-training Terraform output is missing, reapply `terraform/14_sagemaker_forecast_training` first so the latest module outputs are written to state before launching the SageMaker job.
 - If `scripts/run_anomaly_training.py` says an anomaly-training Terraform output is missing, reapply `terraform/15_sagemaker_anomaly_training` first so the latest module outputs are written to state before launching the SageMaker job.
+- If `scripts/evaluate_model_package.py` says a model-evaluation Terraform output is missing, reapply `terraform/19_sagemaker_model_evaluation` first so the latest threshold and report-location outputs are written to state.
+- If `scripts/evaluate_model_package.py` cannot find training metrics for a package, confirm that the corresponding SageMaker training job wrote `evaluation.json` and that the package includes the `training_job_name` customer metadata inserted by the current training runners.
 - If `scripts/deploy_forecast_endpoint.py` says there is no approved forecast package, approve a forecast model version in Studio or via `aws sagemaker update-model-package` before deploying the endpoint.
 - If `scripts/deploy_anomaly_endpoint.py` says there is no approved anomaly package, approve an anomaly model version in Studio or via `aws sagemaker update-model-package` before deploying the endpoint.
 - If `scripts/invoke_forecast_endpoint.py` or `scripts/invoke_anomaly_endpoint.py` fails, confirm that the endpoint is already `InService` and that the payload is valid JSON.
@@ -1789,20 +1843,20 @@ Current implemented scope:
 - forecast endpoint configuration plus a runner script for deploying the latest approved forecast model package
 - anomaly endpoint configuration plus a runner script for deploying the latest approved anomaly model package
 - forecast endpoint invocation, monitoring, and autoscaling support
+- model-evaluation configuration plus a runner script for threshold-based promotion reports and optional approval
 
 Recommended next steps:
 
 1. finish the live anomaly-serving path
 2. apply anomaly-endpoint monitoring and autoscaling
-3. add model evaluation and promotion criteria for forecasting and anomaly detection
-4. add proper sequential forecasting models:
+3. add proper sequential forecasting models:
    `SARIMAX`, `DeepAR`, and `Temporal Fusion Transformer`
-5. add broader anomaly-model comparison, especially forecast-residual anomaly scoring
-6. formalise repeatable endpoint smoke tests
-7. implement Feature Store once the Gold feature contract is stable
-8. add MLflow when multi-model experiment comparison becomes active
-9. add model and data quality monitoring rules
-10. add endpoint authentication, client integration, and retraining rules
+4. add broader anomaly-model comparison, especially forecast-residual anomaly scoring
+5. formalise repeatable endpoint smoke tests
+6. implement Feature Store once the Gold feature contract is stable
+7. add MLflow when multi-model experiment comparison becomes active
+8. add model and data quality monitoring rules
+9. add endpoint authentication, client integration, and retraining rules
 
 </details>
 

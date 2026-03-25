@@ -22,4 +22,10 @@ Examples
 ...     "20260325113000",
 ... )
 'energyops-dev-creative-antelope-forecast-sklearn-train-20260325113000'
+>>> from energy_forecasting.ml.evaluation import evaluate_forecast_metrics
+>>> evaluate_forecast_metrics(
+...     {"mae": 1200.0, "rmse": 1800.0, "r2": 0.71, "training_rows": 96},
+...     {"min_training_rows": 48, "max_mae": 5000.0, "max_rmse": 7000.0, "min_r2": 0.0},
+... )["passed"]
+True
 """
