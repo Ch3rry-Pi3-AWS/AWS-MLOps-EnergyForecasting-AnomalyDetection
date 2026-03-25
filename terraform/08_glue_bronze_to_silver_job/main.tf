@@ -25,10 +25,12 @@ locals {
 # Upload the job script into the artefact bucket so Glue can execute the exact
 # repository version associated with this Terraform deployment.
 resource "aws_s3_object" "glue_job_script" {
-  bucket                 = var.artefact_bucket_name
-  key                    = local.script_object_key
-  source                 = local.script_local_path
-  etag                   = filemd5(local.script_local_path)
+  bucket = var.artefact_bucket_name
+  key    = local.script_object_key
+  source = local.script_local_path
+  # Track local script changes without relying on the ETag field, which
+  # conflicts with KMS-managed uploads for this resource type.
+  source_hash            = filemd5(local.script_local_path)
   content_type           = "text/x-python"
   server_side_encryption = "aws:kms"
   kms_key_id             = var.kms_key_arn
@@ -36,7 +38,6 @@ resource "aws_s3_object" "glue_job_script" {
   tags = merge(
     var.tags,
     {
-      Name      = local.script_object_key
       Component = "glue-job-script"
     }
   )
