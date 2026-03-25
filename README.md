@@ -1,4 +1,4 @@
-# AWS Real-Time Energy Forecasting And Anomaly Detection
+﻿# AWS Real-Time Energy Forecasting And Anomaly Detection
 
 Production-style AWS MLOps project built around near-real-time public energy-demand and weather ingestion, a Bronze/Silver/Gold lakehouse on Amazon S3, and modular Terraform-first infrastructure.
 
@@ -86,6 +86,7 @@ The current orchestration model is cadence-based:
 
 - the ingestion Lambda runs on a recurring schedule
 - the Bronze-to-Silver Glue job also runs on a recurring schedule
+- the Silver-to-Gold Glue job also runs on a recurring schedule
 
 This means the transformation job is not yet triggered by the completion of a
 specific Lambda invocation. Instead, each scheduled Glue run processes whatever
@@ -265,7 +266,8 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |   |-- test_bronze_to_silver_job.py
 |   |-- test_lambda_ingestion.py
 |   |-- test_public_sources.py
-|   `-- test_settings.py
+|   |-- test_settings.py
+|   `-- test_silver_to_gold_job.py
 |-- .env.example
 |-- .gitignore
 |-- pyproject.toml
@@ -786,7 +788,7 @@ forecast_time         temperature_2m  relative_humidity_2m  wind_speed_10m
 So:
 
 - Bronze keeps the raw nested payload
-- Silver will likely flatten and standardise it
+- Silver flattens and standardises it
 
 The same idea applies to the Elexon `data` array. Bronze stores the original
 `data` list, while Silver will likely expand it into one row per demand record.
@@ -1084,7 +1086,7 @@ terraform -chdir=terraform/11_glue_silver_to_gold_scheduler validate
 Python checks:
 
 ```powershell
-python -m py_compile scripts\deploy.py scripts\destroy.py lambda\ingestion\app.py glue\jobs\bronze_to_silver.py
+python -m py_compile scripts\deploy.py scripts\destroy.py lambda\ingestion\app.py glue\jobs\bronze_to_silver.py glue\jobs\silver_to_gold.py
 python -m pytest
 ```
 
@@ -1176,3 +1178,4 @@ Recommended next steps:
   https://docs.aws.amazon.com/s3/
 
 </details>
+
