@@ -15,7 +15,9 @@ This repository currently covers:
 9. automated scheduling for recurring Bronze-to-Silver Glue runs
 10. a Glue Silver-to-Gold transformation job for model-ready features
 11. automated scheduling for recurring Silver-to-Gold Glue runs
-12. helper deploy and destroy scripts that auto-wire Terraform outputs forward
+12. SageMaker model registry groups for forecasting and anomaly models
+13. a SageMaker Studio domain and default user profile for browsing model resources in the Studio UI
+14. helper deploy and destroy scripts that auto-wire Terraform outputs forward
 
 ## Table Of Contents
 
@@ -28,6 +30,7 @@ This repository currently covers:
 - [Configuration And Naming Strategy](#configuration-and-naming-strategy)
 - [Terraform Module Workflow](#terraform-module-workflow)
 - [Deploy And Destroy Commands](#deploy-and-destroy-commands)
+- [SageMaker Registry Vs Studio Domain](#sagemaker-registry-vs-studio-domain)
 - [Current Bronze Ingestion Behaviour](#current-bronze-ingestion-behaviour)
 - [Glue Catalogue Notes](#glue-catalogue-notes)
 - [Source Data Notes](#source-data-notes)
@@ -74,6 +77,19 @@ What exists now:
   uploads the Gold-layer ETL script and creates the first Silver-to-Gold transformation job
 - `terraform/11_glue_silver_to_gold_scheduler`
   creates a recurring schedule that starts the Silver-to-Gold Glue job automatically
+- `terraform/12_sagemaker_model_registry`
+  creates separate SageMaker model package groups for forecasting and anomaly model registration
+- `terraform/13_sagemaker_studio_domain`
+  creates a SageMaker Studio domain and first user profile so registry resources can also be browsed through Studio
+
+The SageMaker split is deliberate:
+
+- `12_sagemaker_model_registry` creates the actual model registry resources in AWS
+- `13_sagemaker_studio_domain` creates the Studio workspace layer used to browse and work with those resources visually
+
+Those two concerns are related, but they are not the same thing. A model
+package group can exist perfectly well without a Studio domain, and a Studio
+domain can exist without any registered models yet.
 
 The Gold job writes two initial model-facing datasets:
 
@@ -140,6 +156,10 @@ flowchart LR
     R[Silver-to-Gold Scheduler] --> O
     O --> P[Gold forecast features]
     O --> Q[Gold anomaly features]
+    P --> S[SageMaker training and registration later]
+    Q --> S
+    S --> T[SageMaker model registry groups]
+    U[SageMaker Studio domain] --> T
 ```
 
 Current Bronze ingestion data flow:
@@ -257,7 +277,17 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |       |-- outputs.tf
 |       |-- terraform.tfvars.example
 |       `-- variables.tf
-|   `-- 11_glue_silver_to_gold_scheduler/
+|   |-- 11_glue_silver_to_gold_scheduler/
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- terraform.tfvars.example
+|       `-- variables.tf
+|   |-- 12_sagemaker_model_registry/
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- terraform.tfvars.example
+|       `-- variables.tf
+|   `-- 13_sagemaker_studio_domain/
 |       |-- main.tf
 |       |-- outputs.tf
 |       |-- terraform.tfvars.example
@@ -265,6 +295,7 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |-- tests/
 |   |-- test_bronze_to_silver_job.py
 |   |-- test_lambda_ingestion.py
+|   |-- test_ml_pipeline.py
 |   |-- test_public_sources.py
 |   |-- test_settings.py
 |   `-- test_silver_to_gold_job.py
@@ -308,6 +339,12 @@ Current core files:
   reads Silver datasets, aligns energy and weather features, and writes Gold forecasting and anomaly datasets
 - `terraform/11_glue_silver_to_gold_scheduler/main.tf`
   creates the recurring EventBridge Scheduler schedule that starts the Silver-to-Gold Glue job
+- `terraform/12_sagemaker_model_registry/main.tf`
+  creates separate SageMaker model package groups for forecasting and anomaly models
+- `terraform/13_sagemaker_studio_domain/main.tf`
+  creates a SageMaker Studio domain and first user profile using IAM auth and default-VPC discovery unless overridden
+- `src/energy_forecasting/ml/pipeline.py`
+  contains naming helpers used by the evolving ML and model-registry scaffold
 
 The README is the canonical setup and usage guide.
 
@@ -330,6 +367,8 @@ You need:
   - IAM roles and policies
   - Lambda functions
   - EventBridge Scheduler schedules
+  - SageMaker domains and user profiles
+  - SageMaker model package groups
 
 Basic checks:
 
@@ -497,6 +536,8 @@ The current module dependency chain is:
 9. `09_glue_bronze_to_silver_scheduler`
 10. `10_glue_silver_to_gold_job`
 11. `11_glue_silver_to_gold_scheduler`
+12. `12_sagemaker_model_registry`
+13. `13_sagemaker_studio_domain`
 
 Why this order matters:
 
@@ -510,6 +551,8 @@ Why this order matters:
 - Bronze-to-Silver scheduler depends on the deployed Glue job name and ARN
 - Silver-to-Gold depends on KMS, the Glue role, lakehouse and artefact buckets, and the existing Silver datasets
 - Silver-to-Gold scheduler depends on the deployed Gold Glue job name and ARN
+- SageMaker model registry depends on the shared deployment context for deterministic package-group naming
+- SageMaker Studio domain depends on the shared deployment context, the SageMaker execution role, the KMS key, and either explicit VPC and subnet IDs or the account's default VPC
 
 The deploy script handles that handoff automatically.
 
@@ -536,6 +579,8 @@ Example Terraform example-variable files currently in the repo:
 - `terraform/09_glue_bronze_to_silver_scheduler/terraform.tfvars.example`
 - `terraform/10_glue_silver_to_gold_job/terraform.tfvars.example`
 - `terraform/11_glue_silver_to_gold_scheduler/terraform.tfvars.example`
+- `terraform/12_sagemaker_model_registry/terraform.tfvars.example`
+- `terraform/13_sagemaker_studio_domain/terraform.tfvars.example`
 
 </details>
 
@@ -564,6 +609,8 @@ python scripts\deploy.py --bronze-silver-only
 python scripts\deploy.py --bronze-silver-scheduler-only
 python scripts\deploy.py --silver-gold-only
 python scripts\deploy.py --silver-gold-scheduler-only
+python scripts\deploy.py --model-registry-only
+python scripts\deploy.py --studio-domain-only
 ```
 
 Expected targeted deploy order:
@@ -580,6 +627,8 @@ python scripts\deploy.py --bronze-silver-only
 python scripts\deploy.py --bronze-silver-scheduler-only
 python scripts\deploy.py --silver-gold-only
 python scripts\deploy.py --silver-gold-scheduler-only
+python scripts\deploy.py --model-registry-only
+python scripts\deploy.py --studio-domain-only
 ```
 
 The Bronze-to-Silver scheduler is the automation step that removes the need
@@ -608,6 +657,28 @@ The Silver-to-Gold scheduler works the same way for the Gold feature job:
 python scripts\deploy.py --silver-gold-scheduler-only
 ```
 
+The SageMaker Studio domain stage is intentionally separate from model
+registry:
+
+- model registry creates the model package groups themselves
+- the Studio domain creates the UI workspace and first user profile used to
+  browse those resources in Studio
+- by default, the domain uses IAM auth plus the account's default VPC and
+  subnets so the setup stays lightweight in a dev account
+
+```powershell
+python scripts\deploy.py --studio-domain-only
+```
+
+If you want the full SageMaker UI path to work cleanly, the practical order is:
+
+1. deploy the model registry groups
+2. deploy the Studio domain
+3. open Studio and browse the registered-model resources there
+
+The model registry step is what creates the AWS resources. The Studio domain
+step is what makes the richer Studio interface available for browsing them.
+
 Destroy everything built so far:
 
 ```powershell
@@ -621,6 +692,8 @@ python scripts\destroy.py --bronze-silver-scheduler-only
 python scripts\destroy.py --bronze-silver-only
 python scripts\destroy.py --silver-gold-only
 python scripts\destroy.py --silver-gold-scheduler-only
+python scripts\destroy.py --model-registry-only
+python scripts\destroy.py --studio-domain-only
 python scripts\destroy.py --scheduler-only
 python scripts\destroy.py --glue-catalog-only
 python scripts\destroy.py --lambda-only
@@ -629,6 +702,85 @@ python scripts\destroy.py --s3-only
 python scripts\destroy.py --kms-only
 python scripts\destroy.py --context-only
 ```
+
+</details>
+
+## SageMaker Registry Vs Studio Domain
+
+<details open>
+<summary>Show or hide section</summary>
+
+This distinction matters because the two SageMaker stages solve different
+problems.
+
+What `12_sagemaker_model_registry` creates:
+
+- forecasting model package group
+- anomaly model package group
+
+These are the actual registry containers that later training jobs will publish
+versioned model packages into.
+
+What `13_sagemaker_studio_domain` creates:
+
+- one SageMaker Studio domain
+- one initial SageMaker user profile
+
+This is the workspace and UI layer that lets you open SageMaker Studio and use
+the documented Studio navigation for models and registered-model resources.
+
+What the model registry does **not** create:
+
+- a Studio domain
+- a Studio user profile
+- a notebook environment
+- a training job
+- a deployable inference endpoint
+
+What the Studio domain does **not** create:
+
+- model package groups
+- trained model versions
+- registered model packages
+
+So in plain English:
+
+- model registry = where model versions will be catalogued
+- Studio domain = where you get the fuller SageMaker Studio interface to view
+  and work with those resources
+
+Why the console was confusing earlier:
+
+- the model package groups already existed in AWS
+- the CLI confirmed that
+- but without a Studio domain, the console experience did not expose the
+  expected Studio model-registry navigation clearly
+
+That is why creating the Studio domain makes sense as a separate follow-on
+stage rather than bundling it into the registry module itself.
+
+How to verify each part:
+
+Verify the model registry groups:
+
+```powershell
+aws sagemaker list-model-package-groups --query "ModelPackageGroupSummaryList[?contains(ModelPackageGroupName, 'energyops')].[ModelPackageGroupName]" --output table
+```
+
+Expected examples:
+
+- `energyops-dev-creative-antelope-forecast-registry`
+- `energyops-dev-creative-antelope-anomaly-registry`
+
+Verify the Studio domain:
+
+```powershell
+aws sagemaker list-domains --query "Domains[?contains(DomainName, 'energyops')].[DomainName,Status]" --output table
+aws sagemaker list-user-profiles --query "UserProfiles[?contains(UserProfileName, 'energyops')].[UserProfileName,DomainId]" --output table
+```
+
+After the Studio domain exists, you should be able to open SageMaker Studio and
+look for model-related views there, rather than relying only on the AWS CLI.
 
 </details>
 
@@ -1081,6 +1233,8 @@ terraform -chdir=terraform/08_glue_bronze_to_silver_job validate
 terraform -chdir=terraform/09_glue_bronze_to_silver_scheduler validate
 terraform -chdir=terraform/10_glue_silver_to_gold_job validate
 terraform -chdir=terraform/11_glue_silver_to_gold_scheduler validate
+terraform -chdir=terraform/12_sagemaker_model_registry validate
+terraform -chdir=terraform/13_sagemaker_studio_domain validate
 ```
 
 Python checks:
@@ -1098,6 +1252,8 @@ aws s3 ls
 aws iam list-roles --query "Roles[?contains(RoleName, 'energyops')].[RoleName]" --output table
 aws lambda list-functions --query "Functions[?contains(FunctionName, 'lambda-ingest')].[FunctionName,Runtime]" --output table
 aws scheduler list-schedules --group-name default
+aws sagemaker list-model-package-groups --query "ModelPackageGroupSummaryList[?contains(ModelPackageGroupName, 'energyops')].[ModelPackageGroupName]" --output table
+aws sagemaker list-domains --query "Domains[?contains(DomainName, 'energyops')].[DomainName,Status]" --output table
 ```
 
 </details>
@@ -1147,10 +1303,12 @@ Current implemented scope:
 - scheduled automation for recurring Bronze-to-Silver Glue runs
 - first Silver-to-Gold Glue transformation job for model-ready features
 - scheduled automation for recurring Silver-to-Gold Glue runs
+- SageMaker model registry groups for forecasting and anomaly models
+- SageMaker Studio domain and default user profile for browsing Studio-managed model resources
 
 Recommended next steps:
 
-1. SageMaker training and model registration
+1. SageMaker training execution and model-package registration flow
 2. endpoint deployment and monitoring
 3. model and data quality monitoring rules
 4. promotion and retraining rules

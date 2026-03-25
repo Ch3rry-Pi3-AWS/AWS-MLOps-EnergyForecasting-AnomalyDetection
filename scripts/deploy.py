@@ -24,6 +24,8 @@ Notes
     9. Glue Bronze-to-Silver scheduler
     10. Glue Silver-to-Gold job
     11. Glue Silver-to-Gold scheduler
+    12. SageMaker model registry
+    13. SageMaker Studio domain
 
 - Full deployment applies every module in sequence.
 - Targeted deployment flags only apply the named module, assuming its
@@ -50,6 +52,14 @@ Deploy only the Silver-to-Gold Glue job after the Silver layer exists:
 Deploy only the Silver-to-Gold scheduler after the Gold job exists:
 
 >>> # python scripts/deploy.py --silver-gold-scheduler-only
+
+Deploy only the SageMaker model registry after the shared context exists:
+
+>>> # python scripts/deploy.py --model-registry-only
+
+Deploy only the SageMaker Studio domain after KMS and IAM exist:
+
+>>> # python scripts/deploy.py --studio-domain-only
 """
 
 from __future__ import annotations
@@ -754,6 +764,60 @@ def write_glue_silver_gold_scheduler_tfvars(
     write_tfvars(scheduler_dir / "terraform.tfvars", items)
 
 
+def write_model_registry_tfvars(
+    registry_dir: Path,
+    context: dict[str, object],
+) -> None:
+    """
+    Write the live variables file for the SageMaker model registry module.
+
+    Parameters
+    ----------
+    registry_dir : Path
+        Terraform directory for `12_sagemaker_model_registry`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("tags", context["standard_tags"]),
+    ]
+    write_tfvars(registry_dir / "terraform.tfvars", items)
+
+
+def write_studio_domain_tfvars(
+    studio_dir: Path,
+    context: dict[str, object],
+    kms_key_arn: str,
+    sagemaker_role_arn: str,
+) -> None:
+    """
+    Write the live variables file for the SageMaker Studio domain module.
+
+    Parameters
+    ----------
+    studio_dir : Path
+        Terraform directory for `13_sagemaker_studio_domain`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    kms_key_arn : str
+        KMS key ARN used by the Studio domain for encrypted storage.
+    sagemaker_role_arn : str
+        IAM role ARN assumed by SageMaker Studio users.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("kms_key_arn", kms_key_arn),
+        ("sagemaker_role_arn", sagemaker_role_arn),
+        ("tags", context["standard_tags"]),
+    ]
+    write_tfvars(studio_dir / "terraform.tfvars", items)
+
+
 def deploy_stack(tf_dir: Path) -> None:
     """
     Initialise and apply a Terraform module.
@@ -803,6 +867,8 @@ if __name__ == "__main__":
             action="store_true",
             help="Deploy only the Silver-to-Gold scheduler stack",
         )
+        group.add_argument("--model-registry-only", action="store_true", help="Deploy only the SageMaker model registry stack")
+        group.add_argument("--studio-domain-only", action="store_true", help="Deploy only the SageMaker Studio domain stack")
         args = parser.parse_args()
 
         repo_root = Path(__file__).resolve().parent.parent
@@ -819,6 +885,8 @@ if __name__ == "__main__":
         glue_bronze_silver_scheduler_dir = repo_root / "terraform" / "09_glue_bronze_to_silver_scheduler"
         glue_silver_gold_dir = repo_root / "terraform" / "10_glue_silver_to_gold_job"
         glue_silver_gold_scheduler_dir = repo_root / "terraform" / "11_glue_silver_to_gold_scheduler"
+        model_registry_dir = repo_root / "terraform" / "12_sagemaker_model_registry"
+        studio_domain_dir = repo_root / "terraform" / "13_sagemaker_studio_domain"
 
         if args.context_only:
             write_context_tfvars(context_dir)
@@ -977,6 +1045,27 @@ if __name__ == "__main__":
             deploy_stack(glue_silver_gold_scheduler_dir)
             sys.exit(0)
 
+        if args.model_registry_only:
+            context = load_context_outputs(context_dir)
+            write_model_registry_tfvars(model_registry_dir, context)
+            deploy_stack(model_registry_dir)
+            sys.exit(0)
+
+        if args.studio_domain_only:
+            context = load_context_outputs(context_dir)
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            sagemaker_role_arn = get_output(iam_dir, "sagemaker_role_arn")
+            write_studio_domain_tfvars(
+                studio_domain_dir,
+                context,
+                kms_key_arn,
+                sagemaker_role_arn,
+            )
+            deploy_stack(studio_domain_dir)
+            sys.exit(0)
+
         write_context_tfvars(context_dir)
         deploy_stack(context_dir)
         context = load_context_outputs(context_dir)
@@ -1001,6 +1090,7 @@ if __name__ == "__main__":
         )
         deploy_stack(iam_dir)
         lambda_role_arn = get_output(iam_dir, "lambda_role_arn")
+        sagemaker_role_arn = get_output(iam_dir, "sagemaker_role_arn")
         lakehouse_bucket_name = get_output(s3_dir, "lakehouse_bucket_name")
         write_lambda_tfvars(
             lambda_dir,
@@ -1070,6 +1160,15 @@ if __name__ == "__main__":
             glue_job_arn,
         )
         deploy_stack(glue_silver_gold_scheduler_dir)
+        write_model_registry_tfvars(model_registry_dir, context)
+        deploy_stack(model_registry_dir)
+        write_studio_domain_tfvars(
+            studio_domain_dir,
+            context,
+            kms_key_arn,
+            sagemaker_role_arn,
+        )
+        deploy_stack(studio_domain_dir)
 
     except subprocess.CalledProcessError as exc:
         print(f"Command failed: {exc}")

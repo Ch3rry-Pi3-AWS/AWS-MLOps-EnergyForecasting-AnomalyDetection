@@ -12,17 +12,19 @@ Notes
   deletion of earlier modules.
 - Full destroy removes resources in this order:
 
-    1. Glue Silver-to-Gold scheduler
-    2. Glue Silver-to-Gold job
-    3. Glue Bronze-to-Silver scheduler
-    4. Glue Bronze-to-Silver job
-    5. Glue catalogue
-    6. EventBridge Scheduler
-    7. Lambda ingestion
-    8. IAM foundation
-    9. S3 lakehouse
-    10. KMS
-    11. Project context
+    1. SageMaker Studio domain
+    2. SageMaker model registry
+    3. Glue Silver-to-Gold scheduler
+    4. Glue Silver-to-Gold job
+    5. Glue Bronze-to-Silver scheduler
+    6. Glue Bronze-to-Silver job
+    7. Glue catalogue
+    8. EventBridge Scheduler
+    9. Lambda ingestion
+    10. IAM foundation
+    11. S3 lakehouse
+    12. KMS
+    13. Project context
 
 Examples
 --------
@@ -45,6 +47,14 @@ Destroy only the Silver-to-Gold Glue job:
 Destroy only the Silver-to-Gold scheduler:
 
 >>> # python scripts/destroy.py --silver-gold-scheduler-only
+
+Destroy only the SageMaker model registry:
+
+>>> # python scripts/destroy.py --model-registry-only
+
+Destroy only the SageMaker Studio domain:
+
+>>> # python scripts/destroy.py --studio-domain-only
 """
 
 from __future__ import annotations
@@ -667,6 +677,60 @@ def write_glue_silver_gold_scheduler_tfvars(
     write_tfvars(scheduler_dir / "terraform.tfvars", items)
 
 
+def write_model_registry_tfvars(
+    registry_dir: Path,
+    context: dict[str, object],
+) -> None:
+    """
+    Write the live variables file for the SageMaker model registry module.
+
+    Parameters
+    ----------
+    registry_dir : Path
+        Terraform directory for `12_sagemaker_model_registry`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("tags", context["standard_tags"]),
+    ]
+    write_tfvars(registry_dir / "terraform.tfvars", items)
+
+
+def write_studio_domain_tfvars(
+    studio_dir: Path,
+    context: dict[str, object],
+    kms_key_arn: str,
+    sagemaker_role_arn: str,
+) -> None:
+    """
+    Write the live variables file for the SageMaker Studio domain module.
+
+    Parameters
+    ----------
+    studio_dir : Path
+        Terraform directory for `13_sagemaker_studio_domain`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    kms_key_arn : str
+        KMS key ARN used by the Studio domain for encrypted storage.
+    sagemaker_role_arn : str
+        IAM role ARN assumed by SageMaker Studio users.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("kms_key_arn", kms_key_arn),
+        ("sagemaker_role_arn", sagemaker_role_arn),
+        ("tags", context["standard_tags"]),
+    ]
+    write_tfvars(studio_dir / "terraform.tfvars", items)
+
+
 def destroy_stack(tf_dir: Path) -> None:
     """
     Destroy a Terraform module.
@@ -726,6 +790,8 @@ if __name__ == "__main__":
             action="store_true",
             help="Destroy only the Silver-to-Gold scheduler stack",
         )
+        group.add_argument("--model-registry-only", action="store_true", help="Destroy only the SageMaker model registry stack")
+        group.add_argument("--studio-domain-only", action="store_true", help="Destroy only the SageMaker Studio domain stack")
         args = parser.parse_args()
 
         repo_root = Path(__file__).resolve().parent.parent
@@ -742,6 +808,8 @@ if __name__ == "__main__":
         glue_bronze_silver_scheduler_dir = repo_root / "terraform" / "09_glue_bronze_to_silver_scheduler"
         glue_silver_gold_dir = repo_root / "terraform" / "10_glue_silver_to_gold_job"
         glue_silver_gold_scheduler_dir = repo_root / "terraform" / "11_glue_silver_to_gold_scheduler"
+        model_registry_dir = repo_root / "terraform" / "12_sagemaker_model_registry"
+        studio_domain_dir = repo_root / "terraform" / "13_sagemaker_studio_domain"
 
         if args.context_only:
             destroy_stack_if_state(context_dir)
@@ -899,6 +967,27 @@ if __name__ == "__main__":
             destroy_stack_if_state(glue_silver_gold_scheduler_dir)
             sys.exit(0)
 
+        if args.model_registry_only:
+            context = load_context_outputs(context_dir)
+            write_model_registry_tfvars(model_registry_dir, context)
+            destroy_stack_if_state(model_registry_dir)
+            sys.exit(0)
+
+        if args.studio_domain_only:
+            context = load_context_outputs(context_dir)
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            sagemaker_role_arn = get_output(iam_dir, "sagemaker_role_arn")
+            write_studio_domain_tfvars(
+                studio_domain_dir,
+                context,
+                kms_key_arn,
+                sagemaker_role_arn,
+            )
+            destroy_stack_if_state(studio_domain_dir)
+            sys.exit(0)
+
         context = None
         if tf_state_exists(context_dir):
             context = load_context_outputs(context_dir)
@@ -1032,6 +1121,23 @@ if __name__ == "__main__":
                 glue_job_arn,
             )
 
+        if context and tf_state_exists(model_registry_dir):
+            write_model_registry_tfvars(model_registry_dir, context)
+
+        if context and tf_state_exists(kms_dir) and tf_state_exists(iam_dir) and tf_state_exists(studio_domain_dir):
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            sagemaker_role_arn = get_output(iam_dir, "sagemaker_role_arn")
+            write_studio_domain_tfvars(
+                studio_domain_dir,
+                context,
+                kms_key_arn,
+                sagemaker_role_arn,
+            )
+
+        destroy_stack_if_state(studio_domain_dir)
+        destroy_stack_if_state(model_registry_dir)
         destroy_stack_if_state(glue_silver_gold_scheduler_dir)
         destroy_stack_if_state(glue_silver_gold_dir)
         destroy_stack_if_state(glue_bronze_silver_scheduler_dir)

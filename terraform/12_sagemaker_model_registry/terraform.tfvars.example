@@ -1,0 +1,8 @@
+aws_region      = "us-east-1"
+deployment_name = "energyops-dev-creative-antelope"
+
+tags = {
+  Project     = "Real-Time Energy Forecasting And Anomaly Detection"
+  Environment = "dev"
+  ManagedBy   = "terraform"
+}
