@@ -21,7 +21,8 @@ This repository currently covers:
 15. an anomaly-training asset stage plus a SageMaker runner script for anomaly registration
 16. a forecast-endpoint configuration stage plus a SageMaker runner script for deploying the latest approved model
 17. an anomaly-endpoint configuration stage plus a SageMaker runner script for deploying the latest approved anomaly model
-18. helper deploy and destroy scripts that auto-wire Terraform outputs forward
+18. a forecast-endpoint operations stage for CloudWatch monitoring and autoscaling
+19. helper deploy and destroy scripts that auto-wire Terraform outputs forward
 
 ## Table Of Contents
 
@@ -96,6 +97,8 @@ What exists now:
   exposes the stable endpoint name, variant configuration, and registry lookup inputs consumed by the endpoint runner
 - `terraform/17_sagemaker_anomaly_endpoint`
   exposes the stable anomaly endpoint name, variant configuration, and registry lookup inputs consumed by the anomaly endpoint runner
+- `terraform/18_sagemaker_forecast_endpoint_ops`
+  adds CloudWatch alarms and target-tracking autoscaling around the deployed forecast endpoint
 
 The SageMaker split is deliberate:
 
@@ -105,6 +108,7 @@ The SageMaker split is deliberate:
 - `15_sagemaker_anomaly_training` does the same for the anomaly model family so both model package groups can be populated through the same staged pattern
 - `16_sagemaker_forecast_endpoint` keeps the durable endpoint naming and sizing in Terraform, while `scripts/deploy_forecast_endpoint.py` resolves the latest approved forecast model package and performs the live SageMaker create or update action
 - `17_sagemaker_anomaly_endpoint` mirrors that deployment pattern for approved anomaly model packages
+- `18_sagemaker_forecast_endpoint_ops` adds the first serving-operations layer after the stable forecast endpoint already exists
 
 Those two concerns are related, but they are not the same thing. A model
 package group can exist perfectly well without a Studio domain, and a Studio
@@ -255,6 +259,8 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |   |-- deploy_anomaly_endpoint.py
 |   |-- deploy_forecast_endpoint.py
 |   |-- destroy.py
+|   |-- invoke_anomaly_endpoint.py
+|   |-- invoke_forecast_endpoint.py
 |   |-- run_anomaly_training.py
 |   `-- run_forecast_training.py
 |-- src/
@@ -360,6 +366,11 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |       |-- outputs.tf
 |       |-- terraform.tfvars.example
 |       `-- variables.tf
+|   `-- 18_sagemaker_forecast_endpoint_ops/
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- terraform.tfvars.example
+|       `-- variables.tf
 |-- tests/
 |   |-- test_bronze_to_silver_job.py
 |   |-- test_lambda_ingestion.py
@@ -387,6 +398,10 @@ Current core files:
   resolves the latest approved forecast model package and deploys or updates the stable SageMaker endpoint
 - `scripts/deploy_anomaly_endpoint.py`
   resolves the latest approved anomaly model package and deploys or updates the stable SageMaker endpoint
+- `scripts/invoke_forecast_endpoint.py`
+  sends a JSON payload to the deployed forecast endpoint so the serving contract can be tested from the command line
+- `scripts/invoke_anomaly_endpoint.py`
+  sends a JSON payload to the deployed anomaly endpoint so the serving contract can be tested from the command line
 - `lambda/ingestion/app.py`
   real ingestion handler that fetches energy and weather JSON, stores raw Bronze payloads, and writes a manifest
 - `terraform/01_project_context/main.tf`
@@ -427,6 +442,8 @@ Current core files:
   exposes the stable endpoint configuration used by the endpoint deployment runner
 - `terraform/17_sagemaker_anomaly_endpoint/main.tf`
   exposes the stable endpoint configuration used by the anomaly endpoint deployment runner
+- `terraform/18_sagemaker_forecast_endpoint_ops/main.tf`
+  adds forecast-endpoint CloudWatch alarms and target-tracking autoscaling after the endpoint exists
 - `sagemaker/forecast_training/train.py`
   trains the baseline forecast model from Gold forecast features
 - `sagemaker/anomaly_training/train.py`
@@ -659,6 +676,7 @@ The current module dependency chain is:
 15. `15_sagemaker_anomaly_training`
 16. `16_sagemaker_forecast_endpoint`
 17. `17_sagemaker_anomaly_endpoint`
+18. `18_sagemaker_forecast_endpoint_ops`
 
 Why this order matters:
 
@@ -678,6 +696,7 @@ Why this order matters:
 - Anomaly training depends on the staged Gold anomaly features, the SageMaker execution role, the artefact bucket, the KMS key, and the anomaly model package group created by the registry stage
 - Forecast endpoint configuration depends on the forecast model package group, the SageMaker execution role, and the KMS key, while the live endpoint deployment also depends on at least one approved forecast model package existing in that group
 - Anomaly endpoint configuration depends on the anomaly model package group, the SageMaker execution role, and the KMS key, while the live endpoint deployment also depends on at least one approved anomaly model package existing in that group
+- Forecast endpoint operations depend on the stable forecast endpoint name and variant name already existing, because autoscaling targets and CloudWatch alarms are attached to the live hosted endpoint
 
 The deploy script handles that handoff automatically.
 
@@ -741,6 +760,7 @@ python scripts\deploy.py --forecast-training-only
 python scripts\deploy.py --anomaly-training-only
 python scripts\deploy.py --forecast-endpoint-only
 python scripts\deploy.py --anomaly-endpoint-only
+python scripts\deploy.py --forecast-endpoint-ops-only
 ```
 
 Expected targeted deploy order:
@@ -763,6 +783,7 @@ python scripts\deploy.py --forecast-training-only
 python scripts\deploy.py --anomaly-training-only
 python scripts\deploy.py --forecast-endpoint-only
 python scripts\deploy.py --anomaly-endpoint-only
+python scripts\deploy.py --forecast-endpoint-ops-only
 ```
 
 The Bronze-to-Silver scheduler is the automation step that removes the need
@@ -865,6 +886,24 @@ Deploy or update the anomaly endpoint from the latest approved anomaly model:
 uv run python scripts\deploy_anomaly_endpoint.py
 ```
 
+Invoke the forecast endpoint directly from the command line:
+
+```powershell
+uv run python scripts\invoke_forecast_endpoint.py
+```
+
+Invoke the anomaly endpoint directly from the command line:
+
+```powershell
+uv run python scripts\invoke_anomaly_endpoint.py
+```
+
+Deploy forecast endpoint monitoring and autoscaling after the endpoint already exists:
+
+```powershell
+python scripts\deploy.py --forecast-endpoint-ops-only
+```
+
 Important endpoint note:
 
 - the runner deploys the latest **approved** forecast model package, not just
@@ -903,6 +942,7 @@ python scripts\destroy.py --forecast-training-only
 python scripts\destroy.py --anomaly-training-only
 python scripts\destroy.py --forecast-endpoint-only
 python scripts\destroy.py --anomaly-endpoint-only
+python scripts\destroy.py --forecast-endpoint-ops-only
 python scripts\destroy.py --scheduler-only
 python scripts\destroy.py --glue-catalog-only
 python scripts\destroy.py --lambda-only
@@ -1052,6 +1092,26 @@ The anomaly endpoint follows the same pattern:
 3. the runner creates a concrete SageMaker model and endpoint configuration
 4. the runner creates or updates the stable anomaly endpoint
 
+The forecast invocation helpers exist so the deployed serving contracts can be
+exercised without constructing ad hoc AWS CLI payloads:
+
+- `scripts/invoke_forecast_endpoint.py`
+- `scripts/invoke_anomaly_endpoint.py`
+
+By default, each helper sends `{"instances": [{}]}`. That minimal request is
+enough to prove the SageMaker hosting contract because the inference code
+reindexes missing feature columns to the trained feature list and fills any
+missing values with `0.0`.
+
+The first endpoint-operations stage is forecast-specific:
+
+1. `terraform/18_sagemaker_forecast_endpoint_ops` attaches target-tracking autoscaling to the live forecast endpoint
+2. it creates CloudWatch alarms for:
+   - high average `ModelLatency`
+   - `Invocation5XXErrors`
+   - `Invocation4XXErrors`
+3. the autoscaling policy uses the built-in SageMaker target metric `SageMakerVariantInvocationsPerInstance`
+
 That separation matters because:
 
 - Terraform should hold the durable infrastructure contract
@@ -1082,6 +1142,8 @@ python scripts\deploy.py --forecast-endpoint-only
 uv run python scripts\deploy_forecast_endpoint.py
 python scripts\deploy.py --anomaly-endpoint-only
 uv run python scripts\deploy_anomaly_endpoint.py
+uv run python scripts\invoke_forecast_endpoint.py
+python scripts\deploy.py --forecast-endpoint-ops-only
 ```
 
 Approve a registered model package before deployment:
@@ -1116,6 +1178,8 @@ aws sagemaker list-model-packages --model-package-group-name energyops-dev-creat
 aws sagemaker list-model-packages --model-package-group-name energyops-dev-creative-antelope-anomaly-registry
 aws sagemaker describe-endpoint --endpoint-name energyops-dev-creative-antelope-forecast-endpoint
 aws sagemaker describe-endpoint --endpoint-name energyops-dev-creative-antelope-anomaly-endpoint
+aws application-autoscaling describe-scalable-targets --service-namespace sagemaker
+aws cloudwatch describe-alarms --alarm-name-prefix energyops-dev-creative-antelope-forecast-endpoint
 ```
 
 </details>
@@ -1144,17 +1208,24 @@ Why they make sense right now:
 
 What we could reasonably try next for forecasting:
 
-- XGBoost
-- Random Forest or Extra Trees
-- LightGBM or CatBoost
-- dedicated time-series approaches later, for example ARIMA, Prophet, DeepAR, or Temporal Fusion Transformer
+- `SARIMAX` as a classical sequential benchmark with exogenous weather regressors
+- `DeepAR` as the first genuinely probabilistic time-series model in the stack
+- `Temporal Fusion Transformer` as a stronger covariate-aware deep sequence model
+- optional lighter statistical baselines such as `ARIMA` or `Prophet`
+
+Practical forecasting direction for this repo:
+
+- keep `GradientBoostingRegressor` as the existing baseline only
+- prioritise proper sequential models next rather than another tabular booster
+- compare a classical time-series model, a probabilistic neural model, and a stronger deep temporal model against the current baseline
 
 What we could reasonably try next for anomaly detection:
 
+- forecast-residual anomaly scoring built on top of the forecast model
 - one-class SVM
 - local outlier factor style baselines
 - autoencoder-based detectors
-- domain-specific residual or rolling-z-score approaches built on top of the forecast model
+- rolling-z-score or thresholded residual baselines for simpler operational comparisons
 
 About the Studio `Experiments` tab and MLflow:
 
@@ -1630,12 +1701,13 @@ terraform -chdir=terraform/14_sagemaker_forecast_training validate
 terraform -chdir=terraform/15_sagemaker_anomaly_training validate
 terraform -chdir=terraform/16_sagemaker_forecast_endpoint validate
 terraform -chdir=terraform/17_sagemaker_anomaly_endpoint validate
+terraform -chdir=terraform/18_sagemaker_forecast_endpoint_ops validate
 ```
 
 Python checks:
 
 ```powershell
-uv run python -m py_compile scripts\deploy.py scripts\destroy.py scripts\run_forecast_training.py scripts\run_anomaly_training.py scripts\deploy_forecast_endpoint.py scripts\deploy_anomaly_endpoint.py lambda\ingestion\app.py glue\jobs\bronze_to_silver.py glue\jobs\silver_to_gold.py sagemaker/forecast_training/train.py sagemaker/forecast_training/inference.py sagemaker/anomaly_training/train.py sagemaker/anomaly_training/inference.py
+uv run python -m py_compile scripts\deploy.py scripts\destroy.py scripts\run_forecast_training.py scripts\run_anomaly_training.py scripts\deploy_forecast_endpoint.py scripts\deploy_anomaly_endpoint.py scripts\invoke_forecast_endpoint.py scripts\invoke_anomaly_endpoint.py lambda\ingestion\app.py glue\jobs\bronze_to_silver.py glue\jobs\silver_to_gold.py sagemaker/forecast_training/train.py sagemaker/forecast_training/inference.py sagemaker/anomaly_training/train.py sagemaker/anomaly_training/inference.py
 uv run pytest
 ```
 
@@ -1677,12 +1749,15 @@ aws sagemaker list-domains --query "Domains[?contains(DomainName, 'energyops')].
 - If SageMaker Studio reports that permissions are not configured correctly, confirm that the SageMaker execution role can call Studio read APIs such as `sagemaker:DescribeDomain` and `sagemaker:DescribeUserProfile`.
 - If SageMaker Studio warns that applications may not open, confirm that the SageMaker execution role can call `sagemaker:CreatePresignedDomainUrl` in addition to the usual Studio read APIs.
 - If SageMaker training or Studio model views complain that logs cannot be described, confirm that the SageMaker execution role can call CloudWatch Logs read actions such as `logs:DescribeLogGroups`, `logs:DescribeLogStreams`, and `logs:GetLogEvents` in addition to the standard log-write actions.
+- If SageMaker Studio can open but endpoint or hosted-model detail pages fail, confirm that the SageMaker execution role can call hosted-serving read APIs such as `sagemaker:DescribeModel`, `sagemaker:DescribeEndpoint`, `sagemaker:DescribeEndpointConfig`, `sagemaker:ListModels`, `sagemaker:ListEndpoints`, and `sagemaker:ListEndpointConfigs`.
 - If the SageMaker forecast-training container fails while importing `pandas` or `numpy`, check the pinned versions in `sagemaker/forecast_training/requirements.txt`. The SageMaker scikit-learn image is sensitive to binary compatibility between `numpy`, `pandas`, and `pyarrow`, so that bundle should stay on image-compatible pins rather than broad `>=` ranges.
 - If the SageMaker anomaly-training container fails while importing `pandas` or `numpy`, apply the same rule to `sagemaker/anomaly_training/requirements.txt`, because it uses the same scikit-learn image family.
 - If `scripts/run_forecast_training.py` says a forecast-training Terraform output is missing, reapply `terraform/14_sagemaker_forecast_training` first so the latest module outputs are written to state before launching the SageMaker job.
 - If `scripts/run_anomaly_training.py` says an anomaly-training Terraform output is missing, reapply `terraform/15_sagemaker_anomaly_training` first so the latest module outputs are written to state before launching the SageMaker job.
 - If `scripts/deploy_forecast_endpoint.py` says there is no approved forecast package, approve a forecast model version in Studio or via `aws sagemaker update-model-package` before deploying the endpoint.
 - If `scripts/deploy_anomaly_endpoint.py` says there is no approved anomaly package, approve an anomaly model version in Studio or via `aws sagemaker update-model-package` before deploying the endpoint.
+- If `scripts/invoke_forecast_endpoint.py` or `scripts/invoke_anomaly_endpoint.py` fails, confirm that the endpoint is already `InService` and that the payload is valid JSON.
+- If `terraform/18_sagemaker_forecast_endpoint_ops` fails, confirm that the forecast endpoint already exists. Autoscaling targets and metric alarms attach to the live endpoint and cannot be created meaningfully before the endpoint itself is present.
 - If pytest warns about local cache-folder permissions on Windows, that does not necessarily mean the tests failed. Check the actual test result summary.
 
 </details>
@@ -1713,13 +1788,21 @@ Current implemented scope:
 - anomaly-training source staging plus a runner script for SageMaker training and model registration
 - forecast endpoint configuration plus a runner script for deploying the latest approved forecast model package
 - anomaly endpoint configuration plus a runner script for deploying the latest approved anomaly model package
+- forecast endpoint invocation, monitoring, and autoscaling support
 
 Recommended next steps:
 
-1. endpoint autoscaling and monitoring
-2. anomaly-model approval and alerting strategy
-3. model and data quality monitoring rules
-4. promotion and retraining rules
+1. finish the live anomaly-serving path
+2. apply anomaly-endpoint monitoring and autoscaling
+3. add model evaluation and promotion criteria for forecasting and anomaly detection
+4. add proper sequential forecasting models:
+   `SARIMAX`, `DeepAR`, and `Temporal Fusion Transformer`
+5. add broader anomaly-model comparison, especially forecast-residual anomaly scoring
+6. formalise repeatable endpoint smoke tests
+7. implement Feature Store once the Gold feature contract is stable
+8. add MLflow when multi-model experiment comparison becomes active
+9. add model and data quality monitoring rules
+10. add endpoint authentication, client integration, and retraining rules
 
 </details>
 
