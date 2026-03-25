@@ -707,6 +707,17 @@ from the catalogue and writes two Silver datasets:
 The Silver outputs are written as Parquet rather than raw JSON. That makes
 them smaller, faster to query, and more appropriate for downstream modelling.
 
+Implementation details worth noting:
+
+- the energy transformation explodes the Elexon `data` array so each
+  settlement interval becomes one Silver row
+- the weather transformation uses `arrays_zip(...)` and `explode(...)` so the
+  parallel hourly arrays become one coherent row per forecast timestamp
+- the Silver energy dataset is partitioned by `settlement_date`
+- the Silver weather dataset is partitioned by `forecast_date`
+- the Glue job script itself is uploaded into the artefact bucket first and
+  the Glue job then executes that uploaded script from S3
+
 </details>
 
 ## Source Data Notes
@@ -1005,6 +1016,9 @@ aws scheduler list-schedules --group-name default
   - S3 object paths
   - the ingestion manifest
 - If the Lambda fails against an upstream API, the failure manifest in Bronze should show the error type and message even when raw payloads are absent.
+- If the Bronze-to-Silver Terraform module fails when uploading the Glue job script, check whether:
+  - `etag` was used alongside KMS object encryption
+  - too many S3 object tags were applied, because S3 object tags are limited to `10`
 - If pytest warns about local cache-folder permissions on Windows, that does not necessarily mean the tests failed. Check the actual test result summary.
 
 </details>
