@@ -69,6 +69,15 @@ What exists now:
 - `terraform/09_glue_bronze_to_silver_scheduler`
   creates a recurring schedule that starts the Bronze-to-Silver Glue job automatically
 
+The current orchestration model is cadence-based:
+
+- the ingestion Lambda runs on a recurring schedule
+- the Bronze-to-Silver Glue job also runs on a recurring schedule
+
+This means the transformation job is not yet triggered by the completion of a
+specific Lambda invocation. Instead, each scheduled Glue run processes whatever
+Bronze data is available at that point in time.
+
 The ingestion path is now real rather than placeholder-only.
 
 On each successful invocation, the Lambda:
@@ -530,6 +539,13 @@ The Bronze-to-Silver scheduler is the automation step that removes the need
 for manual `aws glue start-job-run ...` commands. It uses EventBridge
 Scheduler's universal target support to call Glue `StartJobRun` directly on
 the deployed Bronze-to-Silver job.
+
+Important orchestration detail:
+
+- this is schedule-based automation, not strict event chaining
+- a specific ingestion Lambda run does not directly trigger a specific Glue run
+- the Glue job executes on its own cadence and processes the Bronze data that
+  exists when that scheduled run starts
 
 ```powershell
 python scripts\deploy.py --bronze-silver-scheduler-only
