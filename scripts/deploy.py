@@ -23,6 +23,7 @@ Notes
     8. Glue Bronze-to-Silver job
     9. Glue Bronze-to-Silver scheduler
     10. Glue Silver-to-Gold job
+    11. Glue Silver-to-Gold scheduler
 
 - Full deployment applies every module in sequence.
 - Targeted deployment flags only apply the named module, assuming its
@@ -45,6 +46,10 @@ Deploy only the Bronze-to-Silver scheduler after the Glue job exists:
 Deploy only the Silver-to-Gold Glue job after the Silver layer exists:
 
 >>> # python scripts/deploy.py --silver-gold-only
+
+Deploy only the Silver-to-Gold scheduler after the Gold job exists:
+
+>>> # python scripts/deploy.py --silver-gold-scheduler-only
 """
 
 from __future__ import annotations
@@ -718,6 +723,37 @@ def write_glue_silver_gold_tfvars(
     write_tfvars(glue_job_dir / "terraform.tfvars", items)
 
 
+def write_glue_silver_gold_scheduler_tfvars(
+    scheduler_dir: Path,
+    context: dict[str, object],
+    glue_job_name: str,
+    glue_job_arn: str,
+) -> None:
+    """
+    Write the live variables file for the Silver-to-Gold scheduler module.
+
+    Parameters
+    ----------
+    scheduler_dir : Path
+        Terraform directory for `11_glue_silver_to_gold_scheduler`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    glue_job_name : str
+        Name of the Glue job started by the scheduler.
+    glue_job_arn : str
+        ARN of the Glue job started by the scheduler.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("glue_job_name", glue_job_name),
+        ("glue_job_arn", glue_job_arn),
+        ("tags", context["standard_tags"]),
+    ]
+    write_tfvars(scheduler_dir / "terraform.tfvars", items)
+
+
 def deploy_stack(tf_dir: Path) -> None:
     """
     Initialise and apply a Terraform module.
@@ -762,6 +798,11 @@ if __name__ == "__main__":
             help="Deploy only the Bronze-to-Silver scheduler stack",
         )
         group.add_argument("--silver-gold-only", action="store_true", help="Deploy only the Glue Silver-to-Gold job")
+        group.add_argument(
+            "--silver-gold-scheduler-only",
+            action="store_true",
+            help="Deploy only the Silver-to-Gold scheduler stack",
+        )
         args = parser.parse_args()
 
         repo_root = Path(__file__).resolve().parent.parent
@@ -777,6 +818,7 @@ if __name__ == "__main__":
         glue_bronze_silver_dir = repo_root / "terraform" / "08_glue_bronze_to_silver_job"
         glue_bronze_silver_scheduler_dir = repo_root / "terraform" / "09_glue_bronze_to_silver_scheduler"
         glue_silver_gold_dir = repo_root / "terraform" / "10_glue_silver_to_gold_job"
+        glue_silver_gold_scheduler_dir = repo_root / "terraform" / "11_glue_silver_to_gold_scheduler"
 
         if args.context_only:
             write_context_tfvars(context_dir)
@@ -921,6 +963,20 @@ if __name__ == "__main__":
             deploy_stack(glue_silver_gold_dir)
             sys.exit(0)
 
+        if args.silver_gold_scheduler_only:
+            context = load_context_outputs(context_dir)
+            run(["terraform", f"-chdir={glue_silver_gold_dir}", "init"])
+            glue_job_name = get_output(glue_silver_gold_dir, "glue_job_name")
+            glue_job_arn = get_output(glue_silver_gold_dir, "glue_job_arn")
+            write_glue_silver_gold_scheduler_tfvars(
+                glue_silver_gold_scheduler_dir,
+                context,
+                glue_job_name,
+                glue_job_arn,
+            )
+            deploy_stack(glue_silver_gold_scheduler_dir)
+            sys.exit(0)
+
         write_context_tfvars(context_dir)
         deploy_stack(context_dir)
         context = load_context_outputs(context_dir)
@@ -1005,6 +1061,15 @@ if __name__ == "__main__":
             artefact_bucket_name,
         )
         deploy_stack(glue_silver_gold_dir)
+        glue_job_name = get_output(glue_silver_gold_dir, "glue_job_name")
+        glue_job_arn = get_output(glue_silver_gold_dir, "glue_job_arn")
+        write_glue_silver_gold_scheduler_tfvars(
+            glue_silver_gold_scheduler_dir,
+            context,
+            glue_job_name,
+            glue_job_arn,
+        )
+        deploy_stack(glue_silver_gold_scheduler_dir)
 
     except subprocess.CalledProcessError as exc:
         print(f"Command failed: {exc}")

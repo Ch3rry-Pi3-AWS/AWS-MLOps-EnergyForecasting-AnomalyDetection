@@ -1,0 +1,13 @@
+aws_region      = "us-east-1"
+deployment_name = "energyops-dev-creative-antelope"
+
+glue_job_name = "glue-silver-gold-energyops-dev-creative-antelope"
+glue_job_arn  = "arn:aws:glue:us-east-1:123456789012:job/glue-silver-gold-energyops-dev-creative-antelope"
+
+schedule_expression = "rate(30 minutes)"
+
+tags = {
+  Project     = "Real-Time Energy Forecasting And Anomaly Detection"
+  Environment = "dev"
+  ManagedBy   = "terraform"
+}

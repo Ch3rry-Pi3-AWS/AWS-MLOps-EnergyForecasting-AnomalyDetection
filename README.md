@@ -14,7 +14,8 @@ This repository currently covers:
 8. a Glue Bronze-to-Silver transformation job
 9. automated scheduling for recurring Bronze-to-Silver Glue runs
 10. a Glue Silver-to-Gold transformation job for model-ready features
-11. helper deploy and destroy scripts that auto-wire Terraform outputs forward
+11. automated scheduling for recurring Silver-to-Gold Glue runs
+12. helper deploy and destroy scripts that auto-wire Terraform outputs forward
 
 ## Table Of Contents
 
@@ -71,6 +72,8 @@ What exists now:
   creates a recurring schedule that starts the Bronze-to-Silver Glue job automatically
 - `terraform/10_glue_silver_to_gold_job`
   uploads the Gold-layer ETL script and creates the first Silver-to-Gold transformation job
+- `terraform/11_glue_silver_to_gold_scheduler`
+  creates a recurring schedule that starts the Silver-to-Gold Glue job automatically
 
 The Gold job writes two initial model-facing datasets:
 
@@ -133,6 +136,7 @@ flowchart LR
     K --> M[Silver weather Parquet]
     L --> O[Glue Silver-to-Gold job]
     M --> O
+    R[Silver-to-Gold Scheduler] --> O
     O --> P[Gold forecast features]
     O --> Q[Gold anomaly features]
 ```
@@ -247,7 +251,12 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |       |-- outputs.tf
 |       |-- terraform.tfvars.example
 |       `-- variables.tf
-|   `-- 10_glue_silver_to_gold_job/
+|   |-- 10_glue_silver_to_gold_job/
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- terraform.tfvars.example
+|       `-- variables.tf
+|   `-- 11_glue_silver_to_gold_scheduler/
 |       |-- main.tf
 |       |-- outputs.tf
 |       |-- terraform.tfvars.example
@@ -295,6 +304,8 @@ Current core files:
   uploads the Gold-layer ETL script and creates the first Gold feature-engineering job
 - `glue/jobs/silver_to_gold.py`
   reads Silver datasets, aligns energy and weather features, and writes Gold forecasting and anomaly datasets
+- `terraform/11_glue_silver_to_gold_scheduler/main.tf`
+  creates the recurring EventBridge Scheduler schedule that starts the Silver-to-Gold Glue job
 
 The README is the canonical setup and usage guide.
 
@@ -483,6 +494,7 @@ The current module dependency chain is:
 8. `08_glue_bronze_to_silver_job`
 9. `09_glue_bronze_to_silver_scheduler`
 10. `10_glue_silver_to_gold_job`
+11. `11_glue_silver_to_gold_scheduler`
 
 Why this order matters:
 
@@ -495,6 +507,7 @@ Why this order matters:
 - Glue Bronze-to-Silver depends on KMS, the Glue role, lakehouse and artefact buckets, and Bronze catalogue table names
 - Bronze-to-Silver scheduler depends on the deployed Glue job name and ARN
 - Silver-to-Gold depends on KMS, the Glue role, lakehouse and artefact buckets, and the existing Silver datasets
+- Silver-to-Gold scheduler depends on the deployed Gold Glue job name and ARN
 
 The deploy script handles that handoff automatically.
 
@@ -520,6 +533,7 @@ Example Terraform example-variable files currently in the repo:
 - `terraform/08_glue_bronze_to_silver_job/terraform.tfvars.example`
 - `terraform/09_glue_bronze_to_silver_scheduler/terraform.tfvars.example`
 - `terraform/10_glue_silver_to_gold_job/terraform.tfvars.example`
+- `terraform/11_glue_silver_to_gold_scheduler/terraform.tfvars.example`
 
 </details>
 
@@ -547,6 +561,7 @@ python scripts\deploy.py --glue-catalog-only
 python scripts\deploy.py --bronze-silver-only
 python scripts\deploy.py --bronze-silver-scheduler-only
 python scripts\deploy.py --silver-gold-only
+python scripts\deploy.py --silver-gold-scheduler-only
 ```
 
 Expected targeted deploy order:
@@ -562,6 +577,7 @@ python scripts\deploy.py --glue-catalog-only
 python scripts\deploy.py --bronze-silver-only
 python scripts\deploy.py --bronze-silver-scheduler-only
 python scripts\deploy.py --silver-gold-only
+python scripts\deploy.py --silver-gold-scheduler-only
 ```
 
 The Bronze-to-Silver scheduler is the automation step that removes the need
@@ -580,6 +596,16 @@ Important orchestration detail:
 python scripts\deploy.py --bronze-silver-scheduler-only
 ```
 
+The Silver-to-Gold scheduler works the same way for the Gold feature job:
+
+- it is schedule-based automation, not strict event chaining
+- the Gold job runs on its own cadence and processes whatever Silver data
+  exists when that scheduled run starts
+
+```powershell
+python scripts\deploy.py --silver-gold-scheduler-only
+```
+
 Destroy everything built so far:
 
 ```powershell
@@ -592,6 +618,7 @@ Destroy individual modules:
 python scripts\destroy.py --bronze-silver-scheduler-only
 python scripts\destroy.py --bronze-silver-only
 python scripts\destroy.py --silver-gold-only
+python scripts\destroy.py --silver-gold-scheduler-only
 python scripts\destroy.py --scheduler-only
 python scripts\destroy.py --glue-catalog-only
 python scripts\destroy.py --lambda-only
@@ -1051,6 +1078,7 @@ terraform -chdir=terraform/07_glue_catalog validate
 terraform -chdir=terraform/08_glue_bronze_to_silver_job validate
 terraform -chdir=terraform/09_glue_bronze_to_silver_scheduler validate
 terraform -chdir=terraform/10_glue_silver_to_gold_job validate
+terraform -chdir=terraform/11_glue_silver_to_gold_scheduler validate
 ```
 
 Python checks:
@@ -1116,13 +1144,14 @@ Current implemented scope:
 - first Bronze-to-Silver Glue transformation job
 - scheduled automation for recurring Bronze-to-Silver Glue runs
 - first Silver-to-Gold Glue transformation job for model-ready features
+- scheduled automation for recurring Silver-to-Gold Glue runs
 
 Recommended next steps:
 
-1. schedule or trigger the Silver-to-Gold job automatically
-2. SageMaker training and model registration
-3. endpoint deployment and monitoring
-4. model and data quality monitoring rules
+1. SageMaker training and model registration
+2. endpoint deployment and monitoring
+3. model and data quality monitoring rules
+4. promotion and retraining rules
 
 </details>
 

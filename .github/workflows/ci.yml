@@ -49,7 +49,7 @@ jobs:
 
       - name: Validate Terraform modules
         run: |
-          for dir in terraform/01_project_context terraform/02_kms terraform/03_s3_lakehouse terraform/04_iam_foundation terraform/05_lambda_ingestion terraform/06_eventbridge_scheduler terraform/07_glue_catalog terraform/08_glue_bronze_to_silver_job terraform/09_glue_bronze_to_silver_scheduler terraform/10_glue_silver_to_gold_job; do
+          for dir in terraform/01_project_context terraform/02_kms terraform/03_s3_lakehouse terraform/04_iam_foundation terraform/05_lambda_ingestion terraform/06_eventbridge_scheduler terraform/07_glue_catalog terraform/08_glue_bronze_to_silver_job terraform/09_glue_bronze_to_silver_scheduler terraform/10_glue_silver_to_gold_job terraform/11_glue_silver_to_gold_scheduler; do
             terraform -chdir="$dir" init -backend=false
             terraform -chdir="$dir" validate
           done
