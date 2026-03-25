@@ -24,7 +24,10 @@ The helper functions can be exercised locally without the full Glue runtime:
 from __future__ import annotations
 
 import sys
-from typing import Final, Sequence
+from typing import TYPE_CHECKING, Final, Sequence
+
+if TYPE_CHECKING:
+    from pyspark.sql import DataFrame
 
 JOB_ARGUMENT_NAMES: Final[tuple[str, ...]] = (
     "JOB_NAME",
@@ -106,7 +109,6 @@ def run_job(argv: Sequence[str] | None = None) -> None:
     from awsglue.job import Job
     from awsglue.utils import getResolvedOptions
     from pyspark.context import SparkContext
-    from pyspark.sql import DataFrame
     from pyspark.sql import functions as f
 
     spark_context = SparkContext.getOrCreate()
