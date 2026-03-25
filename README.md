@@ -12,7 +12,8 @@ This repository currently covers:
 6. EventBridge Scheduler orchestration for recurring ingestion
 7. a Glue catalogue database and Bronze external tables
 8. a Glue Bronze-to-Silver transformation job
-9. helper deploy and destroy scripts that auto-wire Terraform outputs forward
+9. automated scheduling for recurring Bronze-to-Silver Glue runs
+10. helper deploy and destroy scripts that auto-wire Terraform outputs forward
 
 ## Table Of Contents
 
@@ -65,6 +66,8 @@ What exists now:
   registers the Bronze raw energy, weather, and ingestion-manifest locations in the Glue Data Catalog
 - `terraform/08_glue_bronze_to_silver_job`
   uploads the Glue ETL script and creates the first Bronze-to-Silver transformation job
+- `terraform/09_glue_bronze_to_silver_scheduler`
+  creates a recurring schedule that starts the Bronze-to-Silver Glue job automatically
 
 The ingestion path is now real rather than placeholder-only.
 
@@ -105,6 +108,7 @@ flowchart LR
     G --> J
     H --> J
     I --> J
+    N[Bronze-to-Silver Scheduler] --> K
     J --> K[Glue Bronze-to-Silver job]
     K --> L[Silver energy Parquet]
     K --> M[Silver weather Parquet]
@@ -204,12 +208,17 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |       |-- outputs.tf
 |       |-- terraform.tfvars.example
 |       `-- variables.tf
-|   `-- 07_glue_catalog/
+|   |-- 07_glue_catalog/
 |       |-- main.tf
 |       |-- outputs.tf
 |       |-- terraform.tfvars.example
 |       `-- variables.tf
-|   `-- 08_glue_bronze_to_silver_job/
+|   |-- 08_glue_bronze_to_silver_job/
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- terraform.tfvars.example
+|       `-- variables.tf
+|   `-- 09_glue_bronze_to_silver_scheduler/
 |       |-- main.tf
 |       |-- outputs.tf
 |       |-- terraform.tfvars.example
@@ -249,6 +258,8 @@ Current core files:
   registers the Bronze S3 locations as Glue database tables for downstream transformation work
 - `terraform/08_glue_bronze_to_silver_job/main.tf`
   uploads the Glue ETL script and creates the first Silver transformation job
+- `terraform/09_glue_bronze_to_silver_scheduler/main.tf`
+  creates the recurring EventBridge Scheduler schedule that starts the Bronze-to-Silver Glue job
 - `glue/jobs/bronze_to_silver.py`
   reads Bronze catalogue tables, flattens the raw structures, and writes Silver Parquet datasets
 
@@ -437,6 +448,7 @@ The current module dependency chain is:
 6. `06_eventbridge_scheduler`
 7. `07_glue_catalog`
 8. `08_glue_bronze_to_silver_job`
+9. `09_glue_bronze_to_silver_scheduler`
 
 Why this order matters:
 
@@ -447,6 +459,7 @@ Why this order matters:
 - Scheduler depends on the Lambda name and ARN
 - Glue catalogue depends on the lakehouse bucket name and Bronze prefix conventions
 - Glue Bronze-to-Silver depends on KMS, the Glue role, lakehouse and artefact buckets, and Bronze catalogue table names
+- Bronze-to-Silver scheduler depends on the deployed Glue job name and ARN
 
 The deploy script handles that handoff automatically.
 
@@ -470,6 +483,7 @@ Example Terraform example-variable files currently in the repo:
 - `terraform/06_eventbridge_scheduler/terraform.tfvars.example`
 - `terraform/07_glue_catalog/terraform.tfvars.example`
 - `terraform/08_glue_bronze_to_silver_job/terraform.tfvars.example`
+- `terraform/09_glue_bronze_to_silver_scheduler/terraform.tfvars.example`
 
 </details>
 
@@ -495,6 +509,7 @@ python scripts\deploy.py --lambda-only
 python scripts\deploy.py --scheduler-only
 python scripts\deploy.py --glue-catalog-only
 python scripts\deploy.py --bronze-silver-only
+python scripts\deploy.py --bronze-silver-scheduler-only
 ```
 
 Expected targeted deploy order:
@@ -508,6 +523,16 @@ python scripts\deploy.py --lambda-only
 python scripts\deploy.py --scheduler-only
 python scripts\deploy.py --glue-catalog-only
 python scripts\deploy.py --bronze-silver-only
+python scripts\deploy.py --bronze-silver-scheduler-only
+```
+
+The Bronze-to-Silver scheduler is the automation step that removes the need
+for manual `aws glue start-job-run ...` commands. It uses EventBridge
+Scheduler's universal target support to call Glue `StartJobRun` directly on
+the deployed Bronze-to-Silver job.
+
+```powershell
+python scripts\deploy.py --bronze-silver-scheduler-only
 ```
 
 Destroy everything built so far:
@@ -519,6 +544,7 @@ python scripts\destroy.py
 Destroy individual modules:
 
 ```powershell
+python scripts\destroy.py --bronze-silver-scheduler-only
 python scripts\destroy.py --bronze-silver-only
 python scripts\destroy.py --scheduler-only
 python scripts\destroy.py --glue-catalog-only
@@ -977,6 +1003,7 @@ terraform -chdir=terraform/05_lambda_ingestion validate
 terraform -chdir=terraform/06_eventbridge_scheduler validate
 terraform -chdir=terraform/07_glue_catalog validate
 terraform -chdir=terraform/08_glue_bronze_to_silver_job validate
+terraform -chdir=terraform/09_glue_bronze_to_silver_scheduler validate
 ```
 
 Python checks:
@@ -1040,14 +1067,15 @@ Current implemented scope:
 - scheduled orchestration with EventBridge Scheduler
 - Glue catalogue registration for Bronze raw datasets and manifests
 - first Bronze-to-Silver Glue transformation job
+- scheduled automation for recurring Bronze-to-Silver Glue runs
 
 Recommended next steps:
 
-1. `09_glue_silver_to_gold_job`
+1. `10_glue_silver_to_gold_job`
    create model-ready and analytics-ready Gold outputs
-2. schedule or trigger the Bronze-to-Silver job automatically
-3. SageMaker training and model registration
-4. endpoint deployment and monitoring
+2. SageMaker training and model registration
+3. endpoint deployment and monitoring
+4. model and data quality monitoring rules
 
 </details>
 

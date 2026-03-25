@@ -12,14 +12,15 @@ Notes
   deletion of earlier modules.
 - Full destroy removes resources in this order:
 
-    1. Glue Bronze-to-Silver job
-    2. Glue catalogue
-    3. EventBridge Scheduler
-    4. Lambda ingestion
-    5. IAM foundation
-    6. S3 lakehouse
-    7. KMS
-    8. Project context
+    1. Glue Bronze-to-Silver scheduler
+    2. Glue Bronze-to-Silver job
+    3. Glue catalogue
+    4. EventBridge Scheduler
+    5. Lambda ingestion
+    6. IAM foundation
+    7. S3 lakehouse
+    8. KMS
+    9. Project context
 
 Examples
 --------
@@ -30,6 +31,10 @@ Destroy the full stack in reverse dependency order:
 Destroy only the Glue catalogue metadata:
 
 >>> # python scripts/destroy.py --glue-catalog-only
+
+Destroy only the Bronze-to-Silver scheduler:
+
+>>> # python scripts/destroy.py --bronze-silver-scheduler-only
 """
 
 from __future__ import annotations
@@ -551,6 +556,37 @@ def write_glue_bronze_silver_tfvars(
     write_tfvars(glue_job_dir / "terraform.tfvars", items)
 
 
+def write_glue_bronze_silver_scheduler_tfvars(
+    scheduler_dir: Path,
+    context: dict[str, object],
+    glue_job_name: str,
+    glue_job_arn: str,
+) -> None:
+    """
+    Write the live variables file for the Bronze-to-Silver scheduler module.
+
+    Parameters
+    ----------
+    scheduler_dir : Path
+        Terraform directory for `09_glue_bronze_to_silver_scheduler`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    glue_job_name : str
+        Name of the Glue job started by the scheduler.
+    glue_job_arn : str
+        ARN of the Glue job started by the scheduler.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("glue_job_name", glue_job_name),
+        ("glue_job_arn", glue_job_arn),
+        ("tags", context["standard_tags"]),
+    ]
+    write_tfvars(scheduler_dir / "terraform.tfvars", items)
+
+
 def destroy_stack(tf_dir: Path) -> None:
     """
     Destroy a Terraform module.
@@ -599,6 +635,11 @@ if __name__ == "__main__":
         group.add_argument("--scheduler-only", action="store_true", help="Destroy only the EventBridge Scheduler stack")
         group.add_argument("--glue-catalog-only", action="store_true", help="Destroy only the Glue catalogue stack")
         group.add_argument("--bronze-silver-only", action="store_true", help="Destroy only the Glue Bronze-to-Silver job")
+        group.add_argument(
+            "--bronze-silver-scheduler-only",
+            action="store_true",
+            help="Destroy only the Bronze-to-Silver scheduler stack",
+        )
         args = parser.parse_args()
 
         repo_root = Path(__file__).resolve().parent.parent
@@ -612,6 +653,7 @@ if __name__ == "__main__":
         scheduler_dir = repo_root / "terraform" / "06_eventbridge_scheduler"
         glue_catalog_dir = repo_root / "terraform" / "07_glue_catalog"
         glue_bronze_silver_dir = repo_root / "terraform" / "08_glue_bronze_to_silver_job"
+        glue_bronze_silver_scheduler_dir = repo_root / "terraform" / "09_glue_bronze_to_silver_scheduler"
 
         if args.context_only:
             destroy_stack_if_state(context_dir)
@@ -721,6 +763,20 @@ if __name__ == "__main__":
             destroy_stack_if_state(glue_bronze_silver_dir)
             sys.exit(0)
 
+        if args.bronze_silver_scheduler_only:
+            context = load_context_outputs(context_dir)
+            run(["terraform", f"-chdir={glue_bronze_silver_dir}", "init"])
+            glue_job_name = get_output(glue_bronze_silver_dir, "glue_job_name")
+            glue_job_arn = get_output(glue_bronze_silver_dir, "glue_job_arn")
+            write_glue_bronze_silver_scheduler_tfvars(
+                glue_bronze_silver_scheduler_dir,
+                context,
+                glue_job_name,
+                glue_job_arn,
+            )
+            destroy_stack_if_state(glue_bronze_silver_scheduler_dir)
+            sys.exit(0)
+
         context = None
         if tf_state_exists(context_dir):
             context = load_context_outputs(context_dir)
@@ -815,6 +871,18 @@ if __name__ == "__main__":
                 weather_table_name,
             )
 
+        if context and tf_state_exists(glue_bronze_silver_dir) and tf_state_exists(glue_bronze_silver_scheduler_dir):
+            run(["terraform", f"-chdir={glue_bronze_silver_dir}", "init"])
+            glue_job_name = get_output(glue_bronze_silver_dir, "glue_job_name")
+            glue_job_arn = get_output(glue_bronze_silver_dir, "glue_job_arn")
+            write_glue_bronze_silver_scheduler_tfvars(
+                glue_bronze_silver_scheduler_dir,
+                context,
+                glue_job_name,
+                glue_job_arn,
+            )
+
+        destroy_stack_if_state(glue_bronze_silver_scheduler_dir)
         destroy_stack_if_state(glue_bronze_silver_dir)
         destroy_stack_if_state(glue_catalog_dir)
         destroy_stack_if_state(scheduler_dir)
