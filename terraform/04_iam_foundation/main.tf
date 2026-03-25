@@ -130,6 +130,9 @@ data "aws_iam_policy_document" "glue_data_access" {
       "cloudwatch:PutMetricData",
       "logs:CreateLogGroup",
       "logs:CreateLogStream",
+      "logs:DescribeLogGroups",
+      "logs:DescribeLogStreams",
+      "logs:GetLogEvents",
       "logs:PutLogEvents",
     ]
     resources = ["*"]
@@ -184,6 +187,36 @@ data "aws_iam_policy_document" "sagemaker_execution" {
       "ecr:DescribeImages",
       "ecr:GetAuthorizationToken",
       "ecr:GetDownloadUrlForLayer",
+    ]
+    resources = ["*"]
+  }
+
+  # Studio uses the SageMaker execution role to read back domain and registry
+  # metadata in the UI. Without these describe/list calls, the domain can
+  # exist but the user still sees "permissions not configured correctly".
+  statement {
+    sid = "StudioMetadataRead"
+    actions = [
+      "sagemaker:CreatePresignedDomainUrl",
+      "sagemaker:DescribeApp",
+      "sagemaker:DescribeDomain",
+      "sagemaker:DescribeImage",
+      "sagemaker:DescribeImageVersion",
+      "sagemaker:DescribeModelPackage",
+      "sagemaker:DescribeModelPackageGroup",
+      "sagemaker:DescribeSpace",
+      "sagemaker:DescribeStudioLifecycleConfig",
+      "sagemaker:DescribeUserProfile",
+      "sagemaker:ListApps",
+      "sagemaker:ListDomains",
+      "sagemaker:ListImageVersions",
+      "sagemaker:ListImages",
+      "sagemaker:ListModelPackages",
+      "sagemaker:ListModelPackageGroups",
+      "sagemaker:ListSpaces",
+      "sagemaker:ListStudioLifecycleConfigs",
+      "sagemaker:ListUserProfiles",
+      "sagemaker:Search",
     ]
     resources = ["*"]
   }

@@ -7,6 +7,13 @@ Examples
 --------
 >>> build_training_job_name("energyops-dev-creative-antelope", "forecast-xgb")
 'energyops-dev-creative-antelope-forecast-xgb-train'
+>>> build_timestamped_sagemaker_name(
+...     "energyops-dev-creative-antelope-forecast-endpoint-config",
+...     "20260325160000",
+... )
+'energyops-dev-creative-antelope-forecast-endpoin-20260325160000'
+>>> build_timestamped_training_job_name("energyops-dev-creative-antelope-forecast-xgb-train", "20260325113000")
+'energyops-dev-creative-antelope-forecast-xgb-train-20260325113000'
 >>> build_model_package_group_name("energyops-dev-creative-antelope", "forecast")
 'energyops-dev-creative-antelope-forecast-registry'
 """
@@ -72,3 +79,76 @@ def build_model_package_group_name(deployment_name: str, model_family: str) -> s
     """
 
     return f"{deployment_name}-{model_family}-registry"
+
+
+def build_timestamped_sagemaker_name(base_name: str, run_suffix: str, max_length: int = 63) -> str:
+    """
+    Append a uniqueness suffix to a SageMaker resource name safely.
+
+    Parameters
+    ----------
+    base_name : str
+        Deterministic base name for the SageMaker resource.
+    run_suffix : str
+        Timestamp or other uniqueness token appended to the base name.
+    max_length : int, default=63
+        Maximum total length supported by the target SageMaker resource.
+
+    Returns
+    -------
+    str
+        Resource name in the form `<base-name>-<run-suffix>`, truncated if
+        needed to satisfy the configured length limit.
+
+    Notes
+    -----
+    Several SageMaker resource names share the same 63-character ceiling.
+    Keeping the suffix intact is more important than preserving the entire
+    base name, because the suffix is what guarantees uniqueness across runs.
+
+    Examples
+    --------
+    >>> build_timestamped_sagemaker_name(
+    ...     "energyops-dev-creative-antelope-forecast-sklearn-train",
+    ...     "20260325113000",
+    ... )
+    'energyops-dev-creative-antelope-forecast-sklearn-20260325113000'
+    """
+    separator = "-"
+    reserved_suffix_length = len(separator) + len(run_suffix)
+    max_base_length = max_length - reserved_suffix_length
+
+    if max_base_length <= 0:
+        raise ValueError("run_suffix is too long to fit within the configured SageMaker name limit.")
+
+    truncated_base_name = base_name[:max_base_length].rstrip(separator)
+    return f"{truncated_base_name}{separator}{run_suffix}"
+
+
+def build_timestamped_training_job_name(base_name: str, run_suffix: str) -> str:
+    """
+    Append a run-specific suffix to a SageMaker training job base name.
+
+    Parameters
+    ----------
+    base_name : str
+        Deterministic base name for the training job.
+    run_suffix : str
+        Timestamp or other uniqueness token appended to the base name.
+
+    Returns
+    -------
+    str
+        Training job name in the form `<base-name>-<run-suffix>`, truncated if
+        needed to satisfy SageMaker's 63-character job-name limit.
+
+    Examples
+    --------
+    >>> build_timestamped_training_job_name(
+    ...     "energyops-dev-creative-antelope-forecast-sklearn-train",
+    ...     "20260325113000",
+    ... )
+    'energyops-dev-creative-antelope-forecast-sklearn-20260325113000'
+    """
+
+    return build_timestamped_sagemaker_name(base_name, run_suffix)

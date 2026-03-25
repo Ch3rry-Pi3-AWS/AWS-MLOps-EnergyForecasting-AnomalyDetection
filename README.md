@@ -17,7 +17,11 @@ This repository currently covers:
 11. automated scheduling for recurring Silver-to-Gold Glue runs
 12. SageMaker model registry groups for forecasting and anomaly models
 13. a SageMaker Studio domain and default user profile for browsing model resources in the Studio UI
-14. helper deploy and destroy scripts that auto-wire Terraform outputs forward
+14. a forecast-training asset stage plus a SageMaker runner script for training and registration
+15. an anomaly-training asset stage plus a SageMaker runner script for anomaly registration
+16. a forecast-endpoint configuration stage plus a SageMaker runner script for deploying the latest approved model
+17. an anomaly-endpoint configuration stage plus a SageMaker runner script for deploying the latest approved anomaly model
+18. helper deploy and destroy scripts that auto-wire Terraform outputs forward
 
 ## Table Of Contents
 
@@ -26,11 +30,14 @@ This repository currently covers:
 - [Repository Structure](#repository-structure)
 - [AWS Prerequisites](#aws-prerequisites)
 - [Windows AWS CLI Setup](#windows-aws-cli-setup)
+- [Local Python Setup](#local-python-setup)
 - [Git And GitHub Setup](#git-and-github-setup)
 - [Configuration And Naming Strategy](#configuration-and-naming-strategy)
 - [Terraform Module Workflow](#terraform-module-workflow)
 - [Deploy And Destroy Commands](#deploy-and-destroy-commands)
 - [SageMaker Registry Vs Studio Domain](#sagemaker-registry-vs-studio-domain)
+- [Forecast Training And Deployment](#forecast-training-and-deployment)
+- [Algorithms And Experiment Tracking](#algorithms-and-experiment-tracking)
 - [Current Bronze Ingestion Behaviour](#current-bronze-ingestion-behaviour)
 - [Glue Catalogue Notes](#glue-catalogue-notes)
 - [Source Data Notes](#source-data-notes)
@@ -81,11 +88,23 @@ What exists now:
   creates separate SageMaker model package groups for forecasting and anomaly model registration
 - `terraform/13_sagemaker_studio_domain`
   creates a SageMaker Studio domain and first user profile so registry resources can also be browsed through Studio
+- `terraform/14_sagemaker_forecast_training`
+  exposes the forecast-training configuration and source-bundle destination consumed by the training runner
+- `terraform/15_sagemaker_anomaly_training`
+  exposes the anomaly-training configuration and source-bundle destination consumed by the anomaly runner
+- `terraform/16_sagemaker_forecast_endpoint`
+  exposes the stable endpoint name, variant configuration, and registry lookup inputs consumed by the endpoint runner
+- `terraform/17_sagemaker_anomaly_endpoint`
+  exposes the stable anomaly endpoint name, variant configuration, and registry lookup inputs consumed by the anomaly endpoint runner
 
 The SageMaker split is deliberate:
 
 - `12_sagemaker_model_registry` creates the actual model registry resources in AWS
 - `13_sagemaker_studio_domain` creates the Studio workspace layer used to browse and work with those resources visually
+- `14_sagemaker_forecast_training` exposes the source-bundle destination and execution configuration for an actual training-and-registration run, while `scripts/run_forecast_training.py` packages the local training code, uploads the `.tar.gz` bundle, launches the ephemeral SageMaker job, and registers the resulting model package
+- `15_sagemaker_anomaly_training` does the same for the anomaly model family so both model package groups can be populated through the same staged pattern
+- `16_sagemaker_forecast_endpoint` keeps the durable endpoint naming and sizing in Terraform, while `scripts/deploy_forecast_endpoint.py` resolves the latest approved forecast model package and performs the live SageMaker create or update action
+- `17_sagemaker_anomaly_endpoint` mirrors that deployment pattern for approved anomaly model packages
 
 Those two concerns are related, but they are not the same thing. A model
 package group can exist perfectly well without a Studio domain, and a Studio
@@ -107,6 +126,14 @@ The current orchestration model is cadence-based:
 This means the transformation job is not yet triggered by the completion of a
 specific Lambda invocation. Instead, each scheduled Glue run processes whatever
 Bronze data is available at that point in time.
+
+The current ML lifecycle is now also real rather than placeholder-only:
+
+1. `scripts/run_forecast_training.py` packages the forecast-training code
+2. SageMaker trains a baseline forecasting model from `gold/forecast_features/`
+3. the runner registers the resulting model package in the forecast registry
+4. `scripts/run_anomaly_training.py` does the same for the anomaly registry from `gold/anomaly_features/`
+5. `scripts/deploy_forecast_endpoint.py` resolves the latest approved forecast package and deploys it to the stable endpoint
 
 The ingestion path is now real rather than placeholder-only.
 
@@ -156,10 +183,18 @@ flowchart LR
     R[Silver-to-Gold Scheduler] --> O
     O --> P[Gold forecast features]
     O --> Q[Gold anomaly features]
-    P --> S[SageMaker training and registration later]
-    Q --> S
-    S --> T[SageMaker model registry groups]
+    P --> S[Forecast training runner]
+    Q --> X[Anomaly training runner]
+    S --> T[SageMaker forecast registry]
+    X --> Y[SageMaker anomaly registry]
     U[SageMaker Studio domain] --> T
+    U --> Y
+    T --> Z[Approved forecast model package]
+    Z --> AA[Forecast endpoint runner]
+    AA --> AB[SageMaker forecast endpoint]
+    Y --> AC[Approved anomaly model package]
+    AC --> AD[Anomaly endpoint runner]
+    AD --> AE[SageMaker anomaly endpoint]
 ```
 
 Current Bronze ingestion data flow:
@@ -206,9 +241,22 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |   `-- jobs/
 |       |-- bronze_to_silver.py
 |       `-- silver_to_gold.py
+|-- sagemaker/
+|   |-- anomaly_training/
+|   |   |-- inference.py
+|   |   |-- requirements.txt
+|   |   `-- train.py
+|   `-- forecast_training/
+|       |-- inference.py
+|       |-- requirements.txt
+|       `-- train.py
 |-- scripts/
 |   |-- deploy.py
-|   `-- destroy.py
+|   |-- deploy_anomaly_endpoint.py
+|   |-- deploy_forecast_endpoint.py
+|   |-- destroy.py
+|   |-- run_anomaly_training.py
+|   `-- run_forecast_training.py
 |-- src/
 |   `-- energy_forecasting/
 |       |-- __init__.py
@@ -287,7 +335,27 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |       |-- outputs.tf
 |       |-- terraform.tfvars.example
 |       `-- variables.tf
-|   `-- 13_sagemaker_studio_domain/
+|   |-- 13_sagemaker_studio_domain/
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- terraform.tfvars.example
+|       `-- variables.tf
+|   `-- 14_sagemaker_forecast_training/
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- terraform.tfvars.example
+|       `-- variables.tf
+|   |-- 15_sagemaker_anomaly_training/
+|   |   |-- main.tf
+|   |   |-- outputs.tf
+|   |   |-- terraform.tfvars.example
+|   |   `-- variables.tf
+|   `-- 16_sagemaker_forecast_endpoint/
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- terraform.tfvars.example
+|       `-- variables.tf
+|   `-- 17_sagemaker_anomaly_endpoint/
 |       |-- main.tf
 |       |-- outputs.tf
 |       |-- terraform.tfvars.example
@@ -311,6 +379,14 @@ Current core files:
   orchestrates Terraform applies in dependency order and auto-writes live `terraform.tfvars`
 - `scripts/destroy.py`
   destroys Terraform modules in reverse dependency order
+- `scripts/run_forecast_training.py`
+  launches the ephemeral SageMaker training job and registers the resulting forecast model package
+- `scripts/run_anomaly_training.py`
+  launches the ephemeral SageMaker anomaly-training job and registers the resulting anomaly model package
+- `scripts/deploy_forecast_endpoint.py`
+  resolves the latest approved forecast model package and deploys or updates the stable SageMaker endpoint
+- `scripts/deploy_anomaly_endpoint.py`
+  resolves the latest approved anomaly model package and deploys or updates the stable SageMaker endpoint
 - `lambda/ingestion/app.py`
   real ingestion handler that fetches energy and weather JSON, stores raw Bronze payloads, and writes a manifest
 - `terraform/01_project_context/main.tf`
@@ -343,6 +419,18 @@ Current core files:
   creates separate SageMaker model package groups for forecasting and anomaly models
 - `terraform/13_sagemaker_studio_domain/main.tf`
   creates a SageMaker Studio domain and first user profile using IAM auth and default-VPC discovery unless overridden
+- `terraform/14_sagemaker_forecast_training/main.tf`
+  exposes the forecast-training source-bundle destination and outputs the SageMaker job configuration used by the runner script
+- `terraform/15_sagemaker_anomaly_training/main.tf`
+  exposes the anomaly-training source-bundle destination and outputs the SageMaker job configuration used by the anomaly runner
+- `terraform/16_sagemaker_forecast_endpoint/main.tf`
+  exposes the stable endpoint configuration used by the endpoint deployment runner
+- `terraform/17_sagemaker_anomaly_endpoint/main.tf`
+  exposes the stable endpoint configuration used by the anomaly endpoint deployment runner
+- `sagemaker/forecast_training/train.py`
+  trains the baseline forecast model from Gold forecast features
+- `sagemaker/anomaly_training/train.py`
+  trains the baseline anomaly model from Gold anomaly features
 - `src/energy_forecasting/ml/pipeline.py`
   contains naming helpers used by the evolving ML and model-registry scaffold
 
@@ -444,6 +532,35 @@ The helper scripts read that file before generating `terraform.tfvars`.
 
 </details>
 
+## Local Python Setup
+
+<details>
+<summary>Show or hide section</summary>
+
+The recommended local Python workflow is `uv`, not installing packages into
+your global interpreter.
+
+This repository includes a committed `uv.lock`, so the local dependency set is
+reproducible rather than floating with each install.
+
+Create or update the local virtual environment from `pyproject.toml`:
+
+```powershell
+uv sync --dev
+```
+
+Then run dependency-aware commands through `uv run`, for example:
+
+```powershell
+uv run python scripts\run_forecast_training.py
+uv run pytest
+```
+
+This keeps project dependencies such as `boto3` isolated inside `.venv/`
+instead of your system Python.
+
+</details>
+
 ## Git And GitHub Setup
 
 <details>
@@ -538,6 +655,10 @@ The current module dependency chain is:
 11. `11_glue_silver_to_gold_scheduler`
 12. `12_sagemaker_model_registry`
 13. `13_sagemaker_studio_domain`
+14. `14_sagemaker_forecast_training`
+15. `15_sagemaker_anomaly_training`
+16. `16_sagemaker_forecast_endpoint`
+17. `17_sagemaker_anomaly_endpoint`
 
 Why this order matters:
 
@@ -553,6 +674,10 @@ Why this order matters:
 - Silver-to-Gold scheduler depends on the deployed Gold Glue job name and ARN
 - SageMaker model registry depends on the shared deployment context for deterministic package-group naming
 - SageMaker Studio domain depends on the shared deployment context, the SageMaker execution role, the KMS key, and either explicit VPC and subnet IDs or the account's default VPC
+- Forecast training depends on the staged Gold forecast features, the SageMaker execution role, the artefact bucket, the KMS key, and the forecast model package group created by the registry stage
+- Anomaly training depends on the staged Gold anomaly features, the SageMaker execution role, the artefact bucket, the KMS key, and the anomaly model package group created by the registry stage
+- Forecast endpoint configuration depends on the forecast model package group, the SageMaker execution role, and the KMS key, while the live endpoint deployment also depends on at least one approved forecast model package existing in that group
+- Anomaly endpoint configuration depends on the anomaly model package group, the SageMaker execution role, and the KMS key, while the live endpoint deployment also depends on at least one approved anomaly model package existing in that group
 
 The deploy script handles that handoff automatically.
 
@@ -581,6 +706,7 @@ Example Terraform example-variable files currently in the repo:
 - `terraform/11_glue_silver_to_gold_scheduler/terraform.tfvars.example`
 - `terraform/12_sagemaker_model_registry/terraform.tfvars.example`
 - `terraform/13_sagemaker_studio_domain/terraform.tfvars.example`
+- `terraform/14_sagemaker_forecast_training/terraform.tfvars.example`
 
 </details>
 
@@ -611,6 +737,10 @@ python scripts\deploy.py --silver-gold-only
 python scripts\deploy.py --silver-gold-scheduler-only
 python scripts\deploy.py --model-registry-only
 python scripts\deploy.py --studio-domain-only
+python scripts\deploy.py --forecast-training-only
+python scripts\deploy.py --anomaly-training-only
+python scripts\deploy.py --forecast-endpoint-only
+python scripts\deploy.py --anomaly-endpoint-only
 ```
 
 Expected targeted deploy order:
@@ -629,6 +759,10 @@ python scripts\deploy.py --silver-gold-only
 python scripts\deploy.py --silver-gold-scheduler-only
 python scripts\deploy.py --model-registry-only
 python scripts\deploy.py --studio-domain-only
+python scripts\deploy.py --forecast-training-only
+python scripts\deploy.py --anomaly-training-only
+python scripts\deploy.py --forecast-endpoint-only
+python scripts\deploy.py --anomaly-endpoint-only
 ```
 
 The Bronze-to-Silver scheduler is the automation step that removes the need
@@ -670,6 +804,77 @@ registry:
 python scripts\deploy.py --studio-domain-only
 ```
 
+The forecast-training stage is also intentionally split in two:
+
+- `terraform/14_sagemaker_forecast_training` exposes the SageMaker job
+  configuration and the destination S3 key for the uploaded source bundle
+- `scripts/run_forecast_training.py` launches the actual ephemeral training
+  job after packaging the local training code as a `.tar.gz`, uploading it to
+  the artefact bucket, and then registering the resulting model package into
+  the forecast registry
+
+This separation keeps Terraform focused on long-lived infrastructure and
+staged artefacts, while the one-off training execution stays in a dedicated
+runner script.
+
+Deploy the forecast-training assets:
+
+```powershell
+python scripts\deploy.py --forecast-training-only
+```
+
+Run the forecast training and registration flow:
+
+```powershell
+uv run python scripts\run_forecast_training.py
+```
+
+Deploy the anomaly-training assets:
+
+```powershell
+python scripts\deploy.py --anomaly-training-only
+```
+
+Run the anomaly training and registration flow:
+
+```powershell
+uv run python scripts\run_anomaly_training.py
+```
+
+Deploy the forecast-endpoint configuration assets:
+
+```powershell
+python scripts\deploy.py --forecast-endpoint-only
+```
+
+Deploy or update the forecast endpoint from the latest approved forecast model:
+
+```powershell
+uv run python scripts\deploy_forecast_endpoint.py
+```
+
+Deploy the anomaly-endpoint configuration assets:
+
+```powershell
+python scripts\deploy.py --anomaly-endpoint-only
+```
+
+Deploy or update the anomaly endpoint from the latest approved anomaly model:
+
+```powershell
+uv run python scripts\deploy_anomaly_endpoint.py
+```
+
+Important endpoint note:
+
+- the runner deploys the latest **approved** forecast model package, not just
+  the latest registered one
+- newly registered forecast model packages are created as
+  `PendingManualApproval`
+- approve the desired forecast package in Studio or via the SageMaker API
+  before deploying the endpoint
+- the same approval rule applies to anomaly endpoint deployment
+
 If you want the full SageMaker UI path to work cleanly, the practical order is:
 
 1. deploy the model registry groups
@@ -694,6 +899,10 @@ python scripts\destroy.py --silver-gold-only
 python scripts\destroy.py --silver-gold-scheduler-only
 python scripts\destroy.py --model-registry-only
 python scripts\destroy.py --studio-domain-only
+python scripts\destroy.py --forecast-training-only
+python scripts\destroy.py --anomaly-training-only
+python scripts\destroy.py --forecast-endpoint-only
+python scripts\destroy.py --anomaly-endpoint-only
 python scripts\destroy.py --scheduler-only
 python scripts\destroy.py --glue-catalog-only
 python scripts\destroy.py --lambda-only
@@ -720,6 +929,10 @@ What `12_sagemaker_model_registry` creates:
 
 These are the actual registry containers that later training jobs will publish
 versioned model packages into.
+
+At this stage, the groups exist but they do not contain any registered model
+versions yet. So it is normal for a Studio view centred on model versions to
+look empty even when the model package groups already exist.
 
 What `13_sagemaker_studio_domain` creates:
 
@@ -772,6 +985,13 @@ Expected examples:
 - `energyops-dev-creative-antelope-forecast-registry`
 - `energyops-dev-creative-antelope-anomaly-registry`
 
+If Studio still looks empty after the groups exist, check which concept the UI
+is showing:
+
+- model package groups can already exist
+- registered model versions will not exist until a later training and
+  registration stage publishes actual model packages into those groups
+
 Verify the Studio domain:
 
 ```powershell
@@ -781,6 +1001,177 @@ aws sagemaker list-user-profiles --query "UserProfiles[?contains(UserProfileName
 
 After the Studio domain exists, you should be able to open SageMaker Studio and
 look for model-related views there, rather than relying only on the AWS CLI.
+
+</details>
+
+## Forecast Training And Deployment
+
+<details open>
+<summary>Show or hide section</summary>
+
+The forecast and anomaly model lifecycles are now split into three clear stages:
+
+1. stage the durable configuration with Terraform
+2. run the ephemeral SageMaker training-and-registration action
+3. deploy an approved forecast model package to the stable endpoint
+
+The forecast-training flow works like this:
+
+1. `terraform/14_sagemaker_forecast_training` writes the SageMaker training configuration into Terraform outputs
+2. `scripts/run_forecast_training.py` packages `sagemaker/forecast_training/` as a `.tar.gz`
+3. the runner uploads that bundle to the artefact bucket with KMS encryption
+4. SageMaker trains the baseline forecast model against `gold/forecast_features/`
+5. the runner registers the produced `model.tar.gz` into the forecast model package group
+6. the new model package version is created with `PendingManualApproval`
+
+That final status is intentional. A model package being successfully trained
+and registered does **not** automatically mean it should be served.
+`PendingManualApproval` is the promotion gate between:
+
+- "the job ran successfully"
+- and "this version is allowed to be deployed"
+
+The anomaly-training flow mirrors the same pattern:
+
+1. `terraform/15_sagemaker_anomaly_training` exposes the anomaly-training configuration
+2. `scripts/run_anomaly_training.py` packages `sagemaker/anomaly_training/`
+3. SageMaker trains the anomaly baseline against `gold/anomaly_features/`
+4. the runner registers the produced model artefact into the anomaly model package group
+
+The endpoint deployment flow is intentionally separate:
+
+1. `terraform/16_sagemaker_forecast_endpoint` exposes the stable endpoint name and instance configuration
+2. `scripts/deploy_forecast_endpoint.py` resolves the latest **approved** forecast model package
+3. the runner creates a concrete SageMaker model and endpoint configuration
+4. the runner creates or updates the stable endpoint
+
+The anomaly endpoint follows the same pattern:
+
+1. `terraform/17_sagemaker_anomaly_endpoint` exposes the stable anomaly endpoint name and instance configuration
+2. `scripts/deploy_anomaly_endpoint.py` resolves the latest **approved** anomaly model package
+3. the runner creates a concrete SageMaker model and endpoint configuration
+4. the runner creates or updates the stable anomaly endpoint
+
+That separation matters because:
+
+- Terraform should hold the durable infrastructure contract
+- training jobs are live runtime executions, not static infrastructure
+- "latest approved model package" is an operational choice, not a fixed Terraform value
+
+Why approval exists:
+
+- a training job can succeed technically while still producing an unsuitable model
+- you may want to compare several registered versions before choosing one
+- approval gives you a realistic promotion checkpoint between experimentation and serving
+- it is the main practical difference between "registered" and "deployable" in this project
+
+Current deployment rule:
+
+- `scripts/deploy_forecast_endpoint.py` deploys the latest **approved** forecast package
+- `scripts/deploy_anomaly_endpoint.py` deploys the latest **approved** anomaly package
+- packages in `PendingManualApproval` are visible in the registry but are not eligible for deployment until promoted
+
+Typical command flow:
+
+```powershell
+python scripts\deploy.py --forecast-training-only
+uv run python scripts\run_forecast_training.py
+python scripts\deploy.py --anomaly-training-only
+uv run python scripts\run_anomaly_training.py
+python scripts\deploy.py --forecast-endpoint-only
+uv run python scripts\deploy_forecast_endpoint.py
+python scripts\deploy.py --anomaly-endpoint-only
+uv run python scripts\deploy_anomaly_endpoint.py
+```
+
+Approve a registered model package before deployment:
+
+```powershell
+aws sagemaker update-model-package --model-package-arn <MODEL_PACKAGE_ARN> --model-approval-status Approved
+```
+
+You can also do the same in SageMaker Studio by opening the model package
+version and changing its approval status there.
+
+Concrete forecast example:
+
+```powershell
+aws sagemaker list-model-packages --model-package-group-name energyops-dev-creative-antelope-forecast-registry
+aws sagemaker update-model-package --model-package-arn arn:aws:sagemaker:us-east-1:822901816445:model-package/energyops-dev-creative-antelope-forecast-registry/1 --model-approval-status Approved
+uv run python scripts\deploy_forecast_endpoint.py
+```
+
+Concrete anomaly example:
+
+```powershell
+aws sagemaker list-model-packages --model-package-group-name energyops-dev-creative-antelope-anomaly-registry
+aws sagemaker update-model-package --model-package-arn <ANOMALY_MODEL_PACKAGE_ARN> --model-approval-status Approved
+uv run python scripts\deploy_anomaly_endpoint.py
+```
+
+Useful verification commands:
+
+```powershell
+aws sagemaker list-model-packages --model-package-group-name energyops-dev-creative-antelope-forecast-registry
+aws sagemaker list-model-packages --model-package-group-name energyops-dev-creative-antelope-anomaly-registry
+aws sagemaker describe-endpoint --endpoint-name energyops-dev-creative-antelope-forecast-endpoint
+aws sagemaker describe-endpoint --endpoint-name energyops-dev-creative-antelope-anomaly-endpoint
+```
+
+</details>
+
+## Algorithms And Experiment Tracking
+
+<details open>
+<summary>Show or hide section</summary>
+
+Current baseline algorithms:
+
+- forecasting:
+  `GradientBoostingRegressor` in `sagemaker/forecast_training/train.py`
+- tiny-data forecast fallback:
+  `DummyRegressor(strategy="mean")`
+- anomaly detection:
+  `IsolationForest` in `sagemaker/anomaly_training/train.py`
+
+These are baseline choices rather than final algorithm bets.
+
+Why they make sense right now:
+
+- they are simple, well-understood baselines
+- they work with the current Gold tabular feature layout
+- they let the project prove the full SageMaker train-register-deploy path before adding tuning complexity
+
+What we could reasonably try next for forecasting:
+
+- XGBoost
+- Random Forest or Extra Trees
+- LightGBM or CatBoost
+- dedicated time-series approaches later, for example ARIMA, Prophet, DeepAR, or Temporal Fusion Transformer
+
+What we could reasonably try next for anomaly detection:
+
+- one-class SVM
+- local outlier factor style baselines
+- autoencoder-based detectors
+- domain-specific residual or rolling-z-score approaches built on top of the forecast model
+
+About the Studio `Experiments` tab and MLflow:
+
+- in the current SageMaker Studio experience, the `Experiments` area is MLflow-oriented rather than the older Studio Classic SageMaker Experiments flow
+- that means the page becomes useful once you create or connect an MLflow Tracking Server and log runs to it
+- this project is **not** using MLflow yet; it is currently using SageMaker training jobs plus SageMaker Model Registry directly
+
+So, is new Studio pushing users toward MLflow?
+
+- effectively, yes for experiment tracking in the new Studio UX
+- not necessarily for all MLOps workflows
+- you can still train models, register them in SageMaker Model Registry, and deploy endpoints without MLflow
+
+Practical recommendation for this repo:
+
+- keep the current SageMaker-native flow for now
+- add MLflow once you start comparing multiple model families, hyperparameter runs, or feature-set variants and want a stronger experiment-tracking UI
 
 </details>
 
@@ -1235,13 +1626,17 @@ terraform -chdir=terraform/10_glue_silver_to_gold_job validate
 terraform -chdir=terraform/11_glue_silver_to_gold_scheduler validate
 terraform -chdir=terraform/12_sagemaker_model_registry validate
 terraform -chdir=terraform/13_sagemaker_studio_domain validate
+terraform -chdir=terraform/14_sagemaker_forecast_training validate
+terraform -chdir=terraform/15_sagemaker_anomaly_training validate
+terraform -chdir=terraform/16_sagemaker_forecast_endpoint validate
+terraform -chdir=terraform/17_sagemaker_anomaly_endpoint validate
 ```
 
 Python checks:
 
 ```powershell
-python -m py_compile scripts\deploy.py scripts\destroy.py lambda\ingestion\app.py glue\jobs\bronze_to_silver.py glue\jobs\silver_to_gold.py
-python -m pytest
+uv run python -m py_compile scripts\deploy.py scripts\destroy.py scripts\run_forecast_training.py scripts\run_anomaly_training.py scripts\deploy_forecast_endpoint.py scripts\deploy_anomaly_endpoint.py lambda\ingestion\app.py glue\jobs\bronze_to_silver.py glue\jobs\silver_to_gold.py sagemaker/forecast_training/train.py sagemaker/forecast_training/inference.py sagemaker/anomaly_training/train.py sagemaker/anomaly_training/inference.py
+uv run pytest
 ```
 
 AWS resource inspection examples:
@@ -1279,6 +1674,15 @@ aws sagemaker list-domains --query "Domains[?contains(DomainName, 'energyops')].
 - If the Bronze-to-Silver Terraform module fails when uploading the Glue job script, check whether:
   - `etag` was used alongside KMS object encryption
   - too many S3 object tags were applied, because S3 object tags are limited to `10`
+- If SageMaker Studio reports that permissions are not configured correctly, confirm that the SageMaker execution role can call Studio read APIs such as `sagemaker:DescribeDomain` and `sagemaker:DescribeUserProfile`.
+- If SageMaker Studio warns that applications may not open, confirm that the SageMaker execution role can call `sagemaker:CreatePresignedDomainUrl` in addition to the usual Studio read APIs.
+- If SageMaker training or Studio model views complain that logs cannot be described, confirm that the SageMaker execution role can call CloudWatch Logs read actions such as `logs:DescribeLogGroups`, `logs:DescribeLogStreams`, and `logs:GetLogEvents` in addition to the standard log-write actions.
+- If the SageMaker forecast-training container fails while importing `pandas` or `numpy`, check the pinned versions in `sagemaker/forecast_training/requirements.txt`. The SageMaker scikit-learn image is sensitive to binary compatibility between `numpy`, `pandas`, and `pyarrow`, so that bundle should stay on image-compatible pins rather than broad `>=` ranges.
+- If the SageMaker anomaly-training container fails while importing `pandas` or `numpy`, apply the same rule to `sagemaker/anomaly_training/requirements.txt`, because it uses the same scikit-learn image family.
+- If `scripts/run_forecast_training.py` says a forecast-training Terraform output is missing, reapply `terraform/14_sagemaker_forecast_training` first so the latest module outputs are written to state before launching the SageMaker job.
+- If `scripts/run_anomaly_training.py` says an anomaly-training Terraform output is missing, reapply `terraform/15_sagemaker_anomaly_training` first so the latest module outputs are written to state before launching the SageMaker job.
+- If `scripts/deploy_forecast_endpoint.py` says there is no approved forecast package, approve a forecast model version in Studio or via `aws sagemaker update-model-package` before deploying the endpoint.
+- If `scripts/deploy_anomaly_endpoint.py` says there is no approved anomaly package, approve an anomaly model version in Studio or via `aws sagemaker update-model-package` before deploying the endpoint.
 - If pytest warns about local cache-folder permissions on Windows, that does not necessarily mean the tests failed. Check the actual test result summary.
 
 </details>
@@ -1305,11 +1709,15 @@ Current implemented scope:
 - scheduled automation for recurring Silver-to-Gold Glue runs
 - SageMaker model registry groups for forecasting and anomaly models
 - SageMaker Studio domain and default user profile for browsing Studio-managed model resources
+- forecast-training source staging plus a runner script for SageMaker training and model registration
+- anomaly-training source staging plus a runner script for SageMaker training and model registration
+- forecast endpoint configuration plus a runner script for deploying the latest approved forecast model package
+- anomaly endpoint configuration plus a runner script for deploying the latest approved anomaly model package
 
 Recommended next steps:
 
-1. SageMaker training execution and model-package registration flow
-2. endpoint deployment and monitoring
+1. endpoint autoscaling and monitoring
+2. anomaly-model approval and alerting strategy
 3. model and data quality monitoring rules
 4. promotion and retraining rules
 

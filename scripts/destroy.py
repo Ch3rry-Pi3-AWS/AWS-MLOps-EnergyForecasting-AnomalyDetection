@@ -12,19 +12,23 @@ Notes
   deletion of earlier modules.
 - Full destroy removes resources in this order:
 
-    1. SageMaker Studio domain
-    2. SageMaker model registry
-    3. Glue Silver-to-Gold scheduler
-    4. Glue Silver-to-Gold job
-    5. Glue Bronze-to-Silver scheduler
-    6. Glue Bronze-to-Silver job
-    7. Glue catalogue
-    8. EventBridge Scheduler
-    9. Lambda ingestion
-    10. IAM foundation
-    11. S3 lakehouse
-    12. KMS
-    13. Project context
+    1. SageMaker anomaly endpoint configuration
+    2. SageMaker forecast endpoint configuration
+    3. SageMaker anomaly training assets
+    4. SageMaker forecast training assets
+    5. SageMaker Studio domain
+    6. SageMaker model registry
+    7. Glue Silver-to-Gold scheduler
+    8. Glue Silver-to-Gold job
+    9. Glue Bronze-to-Silver scheduler
+    10. Glue Bronze-to-Silver job
+    11. Glue catalogue
+    12. EventBridge Scheduler
+    13. Lambda ingestion
+    14. IAM foundation
+    15. S3 lakehouse
+    16. KMS
+    17. Project context
 
 Examples
 --------
@@ -55,6 +59,22 @@ Destroy only the SageMaker model registry:
 Destroy only the SageMaker Studio domain:
 
 >>> # python scripts/destroy.py --studio-domain-only
+
+Destroy only the forecast-training asset stage:
+
+>>> # python scripts/destroy.py --forecast-training-only
+
+Destroy only the anomaly-training asset stage:
+
+>>> # python scripts/destroy.py --anomaly-training-only
+
+Destroy only the forecast-endpoint configuration stage:
+
+>>> # python scripts/destroy.py --forecast-endpoint-only
+
+Destroy only the anomaly-endpoint configuration stage:
+
+>>> # python scripts/destroy.py --anomaly-endpoint-only
 """
 
 from __future__ import annotations
@@ -731,6 +751,158 @@ def write_studio_domain_tfvars(
     write_tfvars(studio_dir / "terraform.tfvars", items)
 
 
+def write_forecast_training_tfvars(
+    training_dir: Path,
+    context: dict[str, object],
+    kms_key_arn: str,
+    artefact_bucket_name: str,
+    lakehouse_bucket_name: str,
+    sagemaker_role_arn: str,
+    forecast_model_package_group_name: str,
+) -> None:
+    """
+    Write the live variables file for the forecast-training asset module.
+
+    Parameters
+    ----------
+    training_dir : Path
+        Terraform directory for `14_sagemaker_forecast_training`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    kms_key_arn : str
+        KMS key ARN used to encrypt the uploaded source bundle.
+    artefact_bucket_name : str
+        Name of the S3 artefact bucket used for training code and outputs.
+    lakehouse_bucket_name : str
+        Name of the S3 lakehouse bucket containing Gold forecast features.
+    sagemaker_role_arn : str
+        IAM role ARN assumed by the SageMaker training job.
+    forecast_model_package_group_name : str
+        Name of the forecast model package group used for registration.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("kms_key_arn", kms_key_arn),
+        ("artefact_bucket_name", artefact_bucket_name),
+        ("lakehouse_bucket_name", lakehouse_bucket_name),
+        ("sagemaker_role_arn", sagemaker_role_arn),
+        ("forecast_model_package_group_name", forecast_model_package_group_name),
+    ]
+    write_tfvars(training_dir / "terraform.tfvars", items)
+
+
+def write_anomaly_training_tfvars(
+    training_dir: Path,
+    context: dict[str, object],
+    kms_key_arn: str,
+    artefact_bucket_name: str,
+    lakehouse_bucket_name: str,
+    sagemaker_role_arn: str,
+    anomaly_model_package_group_name: str,
+) -> None:
+    """
+    Write the live variables file for the anomaly-training asset module.
+
+    Parameters
+    ----------
+    training_dir : Path
+        Terraform directory for `15_sagemaker_anomaly_training`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    kms_key_arn : str
+        KMS key ARN used to encrypt the uploaded source bundle.
+    artefact_bucket_name : str
+        Name of the S3 artefact bucket used for training code and outputs.
+    lakehouse_bucket_name : str
+        Name of the S3 lakehouse bucket containing Gold anomaly features.
+    sagemaker_role_arn : str
+        IAM role ARN assumed by the SageMaker training job.
+    anomaly_model_package_group_name : str
+        Name of the anomaly model package group used for registration.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("kms_key_arn", kms_key_arn),
+        ("artefact_bucket_name", artefact_bucket_name),
+        ("lakehouse_bucket_name", lakehouse_bucket_name),
+        ("sagemaker_role_arn", sagemaker_role_arn),
+        ("anomaly_model_package_group_name", anomaly_model_package_group_name),
+    ]
+    write_tfvars(training_dir / "terraform.tfvars", items)
+
+
+def write_forecast_endpoint_tfvars(
+    endpoint_dir: Path,
+    context: dict[str, object],
+    kms_key_arn: str,
+    sagemaker_role_arn: str,
+    forecast_model_package_group_name: str,
+) -> None:
+    """
+    Write the live variables file for the forecast-endpoint configuration module.
+
+    Parameters
+    ----------
+    endpoint_dir : Path
+        Terraform directory for `16_sagemaker_forecast_endpoint`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    kms_key_arn : str
+        KMS key ARN used to encrypt endpoint resources.
+    sagemaker_role_arn : str
+        IAM role ARN assumed by SageMaker models and endpoints.
+    forecast_model_package_group_name : str
+        Name of the forecast model package group used for deployment lookups.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("kms_key_arn", kms_key_arn),
+        ("sagemaker_role_arn", sagemaker_role_arn),
+        ("forecast_model_package_group_name", forecast_model_package_group_name),
+    ]
+    write_tfvars(endpoint_dir / "terraform.tfvars", items)
+
+
+def write_anomaly_endpoint_tfvars(
+    endpoint_dir: Path,
+    context: dict[str, object],
+    kms_key_arn: str,
+    sagemaker_role_arn: str,
+    anomaly_model_package_group_name: str,
+) -> None:
+    """
+    Write the live variables file for the anomaly-endpoint configuration module.
+
+    Parameters
+    ----------
+    endpoint_dir : Path
+        Terraform directory for `17_sagemaker_anomaly_endpoint`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    kms_key_arn : str
+        KMS key ARN used to encrypt endpoint resources.
+    sagemaker_role_arn : str
+        IAM role ARN assumed by SageMaker models and endpoints.
+    anomaly_model_package_group_name : str
+        Name of the anomaly model package group used for deployment lookups.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("kms_key_arn", kms_key_arn),
+        ("sagemaker_role_arn", sagemaker_role_arn),
+        ("anomaly_model_package_group_name", anomaly_model_package_group_name),
+    ]
+    write_tfvars(endpoint_dir / "terraform.tfvars", items)
+
+
 def destroy_stack(tf_dir: Path) -> None:
     """
     Destroy a Terraform module.
@@ -792,6 +964,10 @@ if __name__ == "__main__":
         )
         group.add_argument("--model-registry-only", action="store_true", help="Destroy only the SageMaker model registry stack")
         group.add_argument("--studio-domain-only", action="store_true", help="Destroy only the SageMaker Studio domain stack")
+        group.add_argument("--forecast-training-only", action="store_true", help="Destroy only the SageMaker forecast training asset stack")
+        group.add_argument("--anomaly-training-only", action="store_true", help="Destroy only the SageMaker anomaly training asset stack")
+        group.add_argument("--forecast-endpoint-only", action="store_true", help="Destroy only the SageMaker forecast endpoint configuration stack")
+        group.add_argument("--anomaly-endpoint-only", action="store_true", help="Destroy only the SageMaker anomaly endpoint configuration stack")
         args = parser.parse_args()
 
         repo_root = Path(__file__).resolve().parent.parent
@@ -810,6 +986,10 @@ if __name__ == "__main__":
         glue_silver_gold_scheduler_dir = repo_root / "terraform" / "11_glue_silver_to_gold_scheduler"
         model_registry_dir = repo_root / "terraform" / "12_sagemaker_model_registry"
         studio_domain_dir = repo_root / "terraform" / "13_sagemaker_studio_domain"
+        forecast_training_dir = repo_root / "terraform" / "14_sagemaker_forecast_training"
+        anomaly_training_dir = repo_root / "terraform" / "15_sagemaker_anomaly_training"
+        forecast_endpoint_dir = repo_root / "terraform" / "16_sagemaker_forecast_endpoint"
+        anomaly_endpoint_dir = repo_root / "terraform" / "17_sagemaker_anomaly_endpoint"
 
         if args.context_only:
             destroy_stack_if_state(context_dir)
@@ -988,6 +1168,88 @@ if __name__ == "__main__":
             destroy_stack_if_state(studio_domain_dir)
             sys.exit(0)
 
+        if args.forecast_training_only:
+            context = load_context_outputs(context_dir)
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={s3_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            run(["terraform", f"-chdir={model_registry_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            artefact_bucket_name = get_output(s3_dir, "artefact_bucket_name")
+            lakehouse_bucket_name = get_output(s3_dir, "lakehouse_bucket_name")
+            sagemaker_role_arn = get_output(iam_dir, "sagemaker_role_arn")
+            forecast_model_package_group_name = get_output(model_registry_dir, "forecast_model_package_group_name")
+            write_forecast_training_tfvars(
+                forecast_training_dir,
+                context,
+                kms_key_arn,
+                artefact_bucket_name,
+                lakehouse_bucket_name,
+                sagemaker_role_arn,
+                forecast_model_package_group_name,
+            )
+            destroy_stack_if_state(forecast_training_dir)
+            sys.exit(0)
+
+        if args.anomaly_training_only:
+            context = load_context_outputs(context_dir)
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={s3_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            run(["terraform", f"-chdir={model_registry_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            artefact_bucket_name = get_output(s3_dir, "artefact_bucket_name")
+            lakehouse_bucket_name = get_output(s3_dir, "lakehouse_bucket_name")
+            sagemaker_role_arn = get_output(iam_dir, "sagemaker_role_arn")
+            anomaly_model_package_group_name = get_output(model_registry_dir, "anomaly_model_package_group_name")
+            write_anomaly_training_tfvars(
+                anomaly_training_dir,
+                context,
+                kms_key_arn,
+                artefact_bucket_name,
+                lakehouse_bucket_name,
+                sagemaker_role_arn,
+                anomaly_model_package_group_name,
+            )
+            destroy_stack_if_state(anomaly_training_dir)
+            sys.exit(0)
+
+        if args.forecast_endpoint_only:
+            context = load_context_outputs(context_dir)
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            run(["terraform", f"-chdir={model_registry_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            sagemaker_role_arn = get_output(iam_dir, "sagemaker_role_arn")
+            forecast_model_package_group_name = get_output(model_registry_dir, "forecast_model_package_group_name")
+            write_forecast_endpoint_tfvars(
+                forecast_endpoint_dir,
+                context,
+                kms_key_arn,
+                sagemaker_role_arn,
+                forecast_model_package_group_name,
+            )
+            destroy_stack_if_state(forecast_endpoint_dir)
+            sys.exit(0)
+
+        if args.anomaly_endpoint_only:
+            context = load_context_outputs(context_dir)
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            run(["terraform", f"-chdir={model_registry_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            sagemaker_role_arn = get_output(iam_dir, "sagemaker_role_arn")
+            anomaly_model_package_group_name = get_output(model_registry_dir, "anomaly_model_package_group_name")
+            write_anomaly_endpoint_tfvars(
+                anomaly_endpoint_dir,
+                context,
+                kms_key_arn,
+                sagemaker_role_arn,
+                anomaly_model_package_group_name,
+            )
+            destroy_stack_if_state(anomaly_endpoint_dir)
+            sys.exit(0)
+
         context = None
         if tf_state_exists(context_dir):
             context = load_context_outputs(context_dir)
@@ -1136,6 +1398,106 @@ if __name__ == "__main__":
                 sagemaker_role_arn,
             )
 
+        if (
+            context
+            and tf_state_exists(kms_dir)
+            and tf_state_exists(s3_dir)
+            and tf_state_exists(iam_dir)
+            and tf_state_exists(model_registry_dir)
+            and tf_state_exists(forecast_training_dir)
+        ):
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={s3_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            run(["terraform", f"-chdir={model_registry_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            artefact_bucket_name = get_output(s3_dir, "artefact_bucket_name")
+            lakehouse_bucket_name = get_output(s3_dir, "lakehouse_bucket_name")
+            sagemaker_role_arn = get_output(iam_dir, "sagemaker_role_arn")
+            forecast_model_package_group_name = get_output(model_registry_dir, "forecast_model_package_group_name")
+            write_forecast_training_tfvars(
+                forecast_training_dir,
+                context,
+                kms_key_arn,
+                artefact_bucket_name,
+                lakehouse_bucket_name,
+                sagemaker_role_arn,
+                forecast_model_package_group_name,
+            )
+
+        if (
+            context
+            and tf_state_exists(kms_dir)
+            and tf_state_exists(s3_dir)
+            and tf_state_exists(iam_dir)
+            and tf_state_exists(model_registry_dir)
+            and tf_state_exists(anomaly_training_dir)
+        ):
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={s3_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            run(["terraform", f"-chdir={model_registry_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            artefact_bucket_name = get_output(s3_dir, "artefact_bucket_name")
+            lakehouse_bucket_name = get_output(s3_dir, "lakehouse_bucket_name")
+            sagemaker_role_arn = get_output(iam_dir, "sagemaker_role_arn")
+            anomaly_model_package_group_name = get_output(model_registry_dir, "anomaly_model_package_group_name")
+            write_anomaly_training_tfvars(
+                anomaly_training_dir,
+                context,
+                kms_key_arn,
+                artefact_bucket_name,
+                lakehouse_bucket_name,
+                sagemaker_role_arn,
+                anomaly_model_package_group_name,
+            )
+
+        if (
+            context
+            and tf_state_exists(kms_dir)
+            and tf_state_exists(iam_dir)
+            and tf_state_exists(model_registry_dir)
+            and tf_state_exists(forecast_endpoint_dir)
+        ):
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            run(["terraform", f"-chdir={model_registry_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            sagemaker_role_arn = get_output(iam_dir, "sagemaker_role_arn")
+            forecast_model_package_group_name = get_output(model_registry_dir, "forecast_model_package_group_name")
+            write_forecast_endpoint_tfvars(
+                forecast_endpoint_dir,
+                context,
+                kms_key_arn,
+                sagemaker_role_arn,
+                forecast_model_package_group_name,
+            )
+
+        if (
+            context
+            and tf_state_exists(kms_dir)
+            and tf_state_exists(iam_dir)
+            and tf_state_exists(model_registry_dir)
+            and tf_state_exists(anomaly_endpoint_dir)
+        ):
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            run(["terraform", f"-chdir={model_registry_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            sagemaker_role_arn = get_output(iam_dir, "sagemaker_role_arn")
+            anomaly_model_package_group_name = get_output(model_registry_dir, "anomaly_model_package_group_name")
+            write_anomaly_endpoint_tfvars(
+                anomaly_endpoint_dir,
+                context,
+                kms_key_arn,
+                sagemaker_role_arn,
+                anomaly_model_package_group_name,
+            )
+
+        destroy_stack_if_state(anomaly_endpoint_dir)
+        destroy_stack_if_state(forecast_endpoint_dir)
+        destroy_stack_if_state(anomaly_training_dir)
+        destroy_stack_if_state(forecast_training_dir)
         destroy_stack_if_state(studio_domain_dir)
         destroy_stack_if_state(model_registry_dir)
         destroy_stack_if_state(glue_silver_gold_scheduler_dir)
