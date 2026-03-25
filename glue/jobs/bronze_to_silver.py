@@ -88,6 +88,68 @@ def build_s3_uri(bucket_name: str, prefix: str) -> str:
     return f"s3://{bucket_name}/{normalise_prefix(prefix)}/"
 
 
+def get_catalog_table_location(glue_client, database_name: str, table_name: str) -> str:
+    """
+    Resolve the S3 location for a Glue catalogue table.
+
+    Parameters
+    ----------
+    glue_client : object
+        Boto3 Glue client.
+    database_name : str
+        Glue database name.
+    table_name : str
+        Glue table name.
+
+    Returns
+    -------
+    str
+        S3 location registered against the Glue table.
+
+    Examples
+    --------
+    >>> get_catalog_table_location(client, "bronze_db", "energy_table")  # doctest: +SKIP
+    """
+
+    table_response = glue_client.get_table(DatabaseName=database_name, Name=table_name)
+    return table_response["Table"]["StorageDescriptor"]["Location"]
+
+
+def read_catalog_json_dataset(spark, glue_client, database_name: str, table_name: str) -> "DataFrame":
+    """
+    Read a JSON dataset from the S3 location registered in the Glue catalogue.
+
+    Parameters
+    ----------
+    spark : SparkSession
+        Spark session used by the Glue job.
+    glue_client : object
+        Boto3 Glue client.
+    database_name : str
+        Glue database name.
+    table_name : str
+        Glue table name.
+
+    Returns
+    -------
+    DataFrame
+        Spark DataFrame parsed from the registered S3 location.
+
+    Notes
+    -----
+    The Bronze raw payloads are written as pretty-printed multi-line JSON.
+    Spark therefore needs the multiline JSON reader enabled rather than the
+    default line-oriented JSON parsing behaviour.
+    """
+
+    dataset_location = get_catalog_table_location(glue_client, database_name, table_name)
+    return (
+        spark.read.option("multiLine", "true")
+        .option("recursiveFileLookup", "true")
+        .json(dataset_location)
+    )
+
+
 def run_job(argv: Sequence[str] | None = None) -> None:
     """
     Execute the Glue transformation job.
@@ -105,6 +167,7 @@ def run_job(argv: Sequence[str] | None = None) -> None:
 
     # Import Glue and Spark runtime libraries lazily so this module can still
     # be imported locally for syntax checks and small helper-function tests.
+    import boto3
     from awsglue.context import GlueContext
     from awsglue.job import Job
     from awsglue.utils import getResolvedOptions
@@ -113,6 +176,7 @@ def run_job(argv: Sequence[str] | None = None) -> None:
 
     spark_context = SparkContext.getOrCreate()
     glue_context = GlueContext(spark_context)
+    spark = glue_context.spark_session
     resolved_args = getResolvedOptions(
         list(argv) if argv is not None else sys.argv,
         list(JOB_ARGUMENT_NAMES),
@@ -126,17 +190,25 @@ def run_job(argv: Sequence[str] | None = None) -> None:
     silver_energy_path = build_s3_uri(lakehouse_bucket_name, resolved_args["SILVER_ENERGY_PREFIX"])
     silver_weather_path = build_s3_uri(lakehouse_bucket_name, resolved_args["SILVER_WEATHER_PREFIX"])
 
-    # Read the Bronze tables via the Glue Data Catalog so the job depends on
-    # stable metadata names rather than hardcoded raw S3 paths.
-    bronze_energy_df = glue_context.create_dynamic_frame.from_catalog(
-        database=bronze_database_name,
-        table_name=resolved_args["ENERGY_TABLE_NAME"],
-    ).toDF()
+    glue_client = boto3.client("glue")
 
-    bronze_weather_df = glue_context.create_dynamic_frame.from_catalog(
-        database=bronze_database_name,
+    # The Glue catalogue still defines the authoritative Bronze locations, but
+    # the actual raw payload files are pretty-printed multi-line JSON. Reading
+    # them through Spark's multiline JSON reader is more reliable than relying
+    # on the catalogue source to infer the raw nested structure directly.
+    bronze_energy_df = read_catalog_json_dataset(
+        spark=spark,
+        glue_client=glue_client,
+        database_name=bronze_database_name,
+        table_name=resolved_args["ENERGY_TABLE_NAME"],
+    )
+
+    bronze_weather_df = read_catalog_json_dataset(
+        spark=spark,
+        glue_client=glue_client,
+        database_name=bronze_database_name,
         table_name=resolved_args["WEATHER_TABLE_NAME"],
-    ).toDF()
+    )
 
     energy_silver_df = transform_energy_bronze_to_silver(bronze_energy_df, f)
     weather_silver_df = transform_weather_bronze_to_silver(bronze_weather_df, f)

@@ -45,6 +45,28 @@ def test_build_s3_uri_appends_trailing_slash():
     assert result == "s3://dl-energyops-dev-creative-antelope/silver/energy/"
 
 
+def test_get_catalog_table_location_returns_storage_descriptor_path():
+    """Check that the job resolves the registered S3 location from Glue metadata."""
+
+    module = _load_glue_job_module()
+
+    class FakeGlueClient:
+        def get_table(self, DatabaseName, Name):  # noqa: N802
+            assert DatabaseName == "bronze_db"
+            assert Name == "energy_table"
+            return {
+                "Table": {
+                    "StorageDescriptor": {
+                        "Location": "s3://dl-energyops-dev-creative-antelope/bronze/raw/energy/"
+                    }
+                }
+            }
+
+    result = module.get_catalog_table_location(FakeGlueClient(), "bronze_db", "energy_table")
+
+    assert result == "s3://dl-energyops-dev-creative-antelope/bronze/raw/energy/"
+
+
 def test_job_argument_names_include_required_catalogue_inputs():
     """Check that the job exposes the catalogue arguments it depends on."""
 
