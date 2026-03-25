@@ -41,8 +41,6 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from energy_forecasting.ml.pipeline import build_timestamped_sagemaker_name
-
 try:
     import boto3
     from botocore.exceptions import ClientError
@@ -51,6 +49,14 @@ except ModuleNotFoundError as exc:  # pragma: no cover - environment guard
         "boto3 is required to deploy the forecast endpoint locally. Install project dependencies with "
         "`uv sync --dev` and then rerun via `uv run python scripts/deploy_forecast_endpoint.py`."
     ) from exc
+
+
+def build_sagemaker_name(base_name: str, timestamp_suffix: str) -> str:
+    """Load the shared SageMaker naming helper lazily after `src/` bootstrapping."""
+
+    from energy_forecasting.ml.pipeline import build_timestamped_sagemaker_name
+
+    return build_timestamped_sagemaker_name(base_name, timestamp_suffix)
 
 
 def run_capture_optional(cmd: list[str]) -> str | None:
@@ -231,8 +237,8 @@ def main() -> None:
         sagemaker_client,
         model_package_group_name,
     )
-    model_name = build_timestamped_sagemaker_name(model_name_base, deployment_suffix)
-    endpoint_config_name = build_timestamped_sagemaker_name(endpoint_config_name_base, deployment_suffix)
+    model_name = build_sagemaker_name(model_name_base, deployment_suffix)
+    endpoint_config_name = build_sagemaker_name(endpoint_config_name_base, deployment_suffix)
 
     print(f"Using model package: {model_package_arn}")
     print(f"Creating SageMaker model: {model_name}")

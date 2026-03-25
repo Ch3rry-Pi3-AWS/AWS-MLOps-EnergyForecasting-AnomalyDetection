@@ -47,8 +47,6 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from energy_forecasting.ml.pipeline import build_timestamped_training_job_name
-
 try:
     import boto3
 except ModuleNotFoundError as exc:  # pragma: no cover - environment guard
@@ -56,6 +54,14 @@ except ModuleNotFoundError as exc:  # pragma: no cover - environment guard
         "boto3 is required to run anomaly training locally. Install project dependencies with "
         "`uv sync --dev` and then rerun via `uv run python scripts/run_anomaly_training.py`."
     ) from exc
+
+
+def build_training_job_name(base_name: str, timestamp_suffix: str) -> str:
+    """Load the shared SageMaker naming helper lazily after `src/` bootstrapping."""
+
+    from energy_forecasting.ml.pipeline import build_timestamped_training_job_name
+
+    return build_timestamped_training_job_name(base_name, timestamp_suffix)
 
 
 def run_capture_optional(cmd: list[str]) -> str | None:
@@ -311,7 +317,7 @@ def main() -> None:
     job_base_name = get_output(training_dir, "anomaly_training_job_base_name")
     kms_key_arn = get_output(training_dir, "anomaly_training_kms_key_arn")
 
-    training_job_name = build_timestamped_training_job_name(
+    training_job_name = build_training_job_name(
         job_base_name,
         datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
     )
