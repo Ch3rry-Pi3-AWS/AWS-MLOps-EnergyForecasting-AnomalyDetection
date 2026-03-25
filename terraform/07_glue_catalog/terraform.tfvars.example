@@ -1,0 +1,11 @@
+aws_region          = "us-east-1"
+deployment_name     = "energyops-dev-creative-antelope"
+lakehouse_bucket_name = "dl-energyops-dev-creative-antelope"
+bronze_raw_prefix   = "bronze/raw"
+bronze_ingest_prefix = "bronze/ingestion-manifests"
+
+tags = {
+  Project     = "Real-Time Energy Forecasting and Anomaly Detection"
+  Environment = "dev"
+  ManagedBy   = "terraform"
+}

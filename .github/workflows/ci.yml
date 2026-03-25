@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: Run tests
+        run: pytest
+
+      - name: Run Ruff
+        run: ruff check .
+
+  terraform:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.5
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive
+
+      - name: Validate Terraform modules
+        run: |
+          for dir in terraform/01_project_context terraform/02_kms terraform/03_s3_lakehouse terraform/04_iam_foundation terraform/05_lambda_ingestion terraform/06_eventbridge_scheduler terraform/07_glue_catalog; do
+            terraform -chdir="$dir" init -backend=false
+            terraform -chdir="$dir" validate
+          done

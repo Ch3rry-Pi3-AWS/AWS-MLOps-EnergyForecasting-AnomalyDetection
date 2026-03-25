@@ -10,7 +10,8 @@ This repository currently covers:
 4. IAM foundation roles for Lambda, Glue, and SageMaker
 5. a real ingestion Lambda that fetches public Elexon and Open-Meteo data
 6. EventBridge Scheduler orchestration for recurring ingestion
-7. helper deploy and destroy scripts that auto-wire Terraform outputs forward
+7. a Glue catalogue database and Bronze external tables
+8. helper deploy and destroy scripts that auto-wire Terraform outputs forward
 
 ## Table Of Contents
 
@@ -24,6 +25,7 @@ This repository currently covers:
 - [Terraform Module Workflow](#terraform-module-workflow)
 - [Deploy And Destroy Commands](#deploy-and-destroy-commands)
 - [Current Bronze Ingestion Behaviour](#current-bronze-ingestion-behaviour)
+- [Glue Catalogue Notes](#glue-catalogue-notes)
 - [Source Data Notes](#source-data-notes)
 - [Example Bronze Outputs](#example-bronze-outputs)
 - [Verification Commands](#verification-commands)
@@ -58,6 +60,8 @@ What exists now:
   packages and deploys a Python ingestion Lambda
 - `terraform/06_eventbridge_scheduler`
   creates a recurring schedule that invokes the ingestion Lambda every 30 minutes by default
+- `terraform/07_glue_catalog`
+  registers the Bronze raw energy, weather, and ingestion-manifest locations in the Glue Data Catalog
 
 The ingestion path is now real rather than placeholder-only.
 
@@ -94,6 +98,10 @@ flowchart LR
     E --> G[Bronze raw energy JSON]
     E --> H[Bronze raw weather JSON]
     E --> I[Bronze ingestion manifest]
+    C --> J[Glue catalogue]
+    G --> J
+    H --> J
+    I --> J
 ```
 
 Current Bronze ingestion data flow:
@@ -182,7 +190,12 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |   |   |-- outputs.tf
 |   |   |-- terraform.tfvars.example
 |   |   `-- variables.tf
-|   `-- 06_eventbridge_scheduler/
+|   |-- 06_eventbridge_scheduler/
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- terraform.tfvars.example
+|       `-- variables.tf
+|   `-- 07_glue_catalog/
 |       |-- main.tf
 |       |-- outputs.tf
 |       |-- terraform.tfvars.example
@@ -217,6 +230,8 @@ Current core files:
   packages and deploys the ingestion Lambda
 - `terraform/06_eventbridge_scheduler/main.tf`
   creates the recurring scheduler and Lambda invocation permission
+- `terraform/07_glue_catalog/main.tf`
+  registers the Bronze S3 locations as Glue database tables for downstream transformation work
 
 The README is the canonical setup and usage guide.
 
@@ -401,6 +416,7 @@ The current module dependency chain is:
 4. `04_iam_foundation`
 5. `05_lambda_ingestion`
 6. `06_eventbridge_scheduler`
+7. `07_glue_catalog`
 
 Why this order matters:
 
@@ -409,6 +425,7 @@ Why this order matters:
 - IAM depends on both S3 and KMS ARNs
 - Lambda depends on IAM, S3, and KMS
 - Scheduler depends on the Lambda name and ARN
+- Glue catalogue depends on the lakehouse bucket name and Bronze prefix conventions
 
 The deploy script handles that handoff automatically.
 
@@ -430,6 +447,7 @@ Example Terraform example-variable files currently in the repo:
 - `terraform/04_iam_foundation/terraform.tfvars.example`
 - `terraform/05_lambda_ingestion/terraform.tfvars.example`
 - `terraform/06_eventbridge_scheduler/terraform.tfvars.example`
+- `terraform/07_glue_catalog/terraform.tfvars.example`
 
 </details>
 
@@ -453,6 +471,7 @@ python scripts\deploy.py --s3-only
 python scripts\deploy.py --iam-only
 python scripts\deploy.py --lambda-only
 python scripts\deploy.py --scheduler-only
+python scripts\deploy.py --glue-catalog-only
 ```
 
 Expected targeted deploy order:
@@ -464,6 +483,7 @@ python scripts\deploy.py --s3-only
 python scripts\deploy.py --iam-only
 python scripts\deploy.py --lambda-only
 python scripts\deploy.py --scheduler-only
+python scripts\deploy.py --glue-catalog-only
 ```
 
 Destroy everything built so far:
@@ -476,6 +496,7 @@ Destroy individual modules:
 
 ```powershell
 python scripts\destroy.py --scheduler-only
+python scripts\destroy.py --glue-catalog-only
 python scripts\destroy.py --lambda-only
 python scripts\destroy.py --iam-only
 python scripts\destroy.py --s3-only
@@ -523,6 +544,128 @@ If an exception happens after the invocation starts:
 
 - the Lambda still writes a failure manifest containing the error type and message
 - then it raises the exception so the failure is visible in CloudWatch and Lambda metrics
+
+</details>
+
+## Glue Catalogue Notes
+
+<details open>
+<summary>Show or hide section</summary>
+
+The `07_glue_catalog` module does not transform or move data. It registers
+metadata over the existing Bronze S3 locations so Glue and Athena-compatible
+tools know:
+
+- where the files live
+- what format they are in
+- how to interpret their schema
+
+### Reading files from the Bronze S3 path
+
+When the table uses:
+
+```hcl
+location = "s3://<lakehouse-bucket>/bronze/raw/energy/"
+```
+
+it means:
+
+- this Glue table points at that S3 prefix
+- every object found under that prefix is treated as part of the table
+- the table is only metadata; the actual files remain in S3
+
+So the energy table is effectively saying:
+
+- read JSON files from the Bronze raw energy folder
+- expose them through a named Glue table
+
+### JSON SerDe
+
+The `ser_de_info` block uses:
+
+```hcl
+serialization_library = "org.openx.data.jsonserde.JsonSerDe"
+```
+
+`SerDe` means `serialiser/deserialiser`.
+
+In practical terms, this is the component that tells Glue how to turn raw text
+in the S3 objects into structured columns and nested fields.
+
+Without a JSON SerDe:
+
+- Glue would know the file location
+- but it would not know how to interpret the JSON structure properly
+
+With the JSON SerDe:
+
+- Glue can map the raw JSON keys into the column definitions in the table
+- nested structures such as arrays and structs can be represented in the schema
+
+### Input and output formats in the storage descriptor
+
+The storage descriptor uses:
+
+```hcl
+input_format  = "org.apache.hadoop.mapred.TextInputFormat"
+output_format = "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat"
+```
+
+These are Hadoop or Hive-compatible format classes used by Glue metadata.
+
+What they mean here:
+
+- `TextInputFormat`
+  each source object is treated as text input rather than as a binary format such as Parquet or ORC
+- `HiveIgnoreKeyTextOutputFormat`
+  if a Hive-compatible engine writes data using this table definition, it writes plain text output and ignores any key concept
+
+In this project, the important practical point is:
+
+- the Bronze files are JSON text files
+- not Parquet
+- not CSV
+- not ORC
+
+So these formats are the standard text-oriented companion settings around the
+JSON SerDe.
+
+### What flattening means
+
+Flattening means taking nested or array-based raw structures and converting
+them into a simpler row-based table shape.
+
+For example, the raw weather payload currently looks roughly like this:
+
+```json
+{
+  "hourly": {
+    "time": ["2026-03-24T00:00", "2026-03-24T01:00"],
+    "temperature_2m": [10.7, 10.3],
+    "relative_humidity_2m": [71, 77],
+    "wind_speed_10m": [13.7, 16.2]
+  }
+}
+```
+
+That is convenient for preserving the original API response, but it is not the
+best shape for analytics or model features.
+
+Flattening would turn it into rows like:
+
+```text
+forecast_time         temperature_2m  relative_humidity_2m  wind_speed_10m
+2026-03-24T00:00      10.7            71                    13.7
+2026-03-24T01:00      10.3            77                    16.2
+```
+
+So:
+
+- Bronze keeps the raw nested payload
+- Silver will likely flatten and standardise it
+
+The same idea applies to the Elexon `data` array. Bronze stores the original
+`data` list, while Silver will likely expand it into one row per demand record.
 
 </details>
 
@@ -781,6 +924,7 @@ terraform -chdir=terraform/03_s3_lakehouse validate
 terraform -chdir=terraform/04_iam_foundation validate
 terraform -chdir=terraform/05_lambda_ingestion validate
 terraform -chdir=terraform/06_eventbridge_scheduler validate
+terraform -chdir=terraform/07_glue_catalog validate
 ```
 
 Python checks:
@@ -839,17 +983,16 @@ Current implemented scope:
 - IAM foundation roles
 - real Lambda ingestion for energy and weather raw data
 - scheduled orchestration with EventBridge Scheduler
+- Glue catalogue registration for Bronze raw datasets and manifests
 
 Recommended next steps:
 
-1. `07_glue_catalog`
-   register the Bronze raw locations in the Glue Data Catalog
-2. `08_glue_bronze_to_silver_job`
+1. `08_glue_bronze_to_silver_job`
    clean and standardise the raw energy and weather data
-3. `09_glue_silver_to_gold_job`
+2. `09_glue_silver_to_gold_job`
    create model-ready and analytics-ready Gold outputs
-4. SageMaker training and model registration
-5. endpoint deployment and monitoring
+3. SageMaker training and model registration
+4. endpoint deployment and monitoring
 
 </details>
 
