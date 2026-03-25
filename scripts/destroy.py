@@ -12,15 +12,16 @@ Notes
   deletion of earlier modules.
 - Full destroy removes resources in this order:
 
-    1. Glue Bronze-to-Silver scheduler
-    2. Glue Bronze-to-Silver job
-    3. Glue catalogue
-    4. EventBridge Scheduler
-    5. Lambda ingestion
-    6. IAM foundation
-    7. S3 lakehouse
-    8. KMS
-    9. Project context
+    1. Glue Silver-to-Gold job
+    2. Glue Bronze-to-Silver scheduler
+    3. Glue Bronze-to-Silver job
+    4. Glue catalogue
+    5. EventBridge Scheduler
+    6. Lambda ingestion
+    7. IAM foundation
+    8. S3 lakehouse
+    9. KMS
+    10. Project context
 
 Examples
 --------
@@ -35,6 +36,10 @@ Destroy only the Glue catalogue metadata:
 Destroy only the Bronze-to-Silver scheduler:
 
 >>> # python scripts/destroy.py --bronze-silver-scheduler-only
+
+Destroy only the Silver-to-Gold Glue job:
+
+>>> # python scripts/destroy.py --silver-gold-only
 """
 
 from __future__ import annotations
@@ -587,6 +592,45 @@ def write_glue_bronze_silver_scheduler_tfvars(
     write_tfvars(scheduler_dir / "terraform.tfvars", items)
 
 
+def write_glue_silver_gold_tfvars(
+    glue_job_dir: Path,
+    context: dict[str, object],
+    kms_key_arn: str,
+    glue_role_arn: str,
+    lakehouse_bucket_name: str,
+    artefact_bucket_name: str,
+) -> None:
+    """
+    Write the live variables file for the Glue Silver-to-Gold job module.
+
+    Parameters
+    ----------
+    glue_job_dir : Path
+        Terraform directory for `10_glue_silver_to_gold_job`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    kms_key_arn : str
+        KMS key ARN used to encrypt the uploaded Glue job script.
+    glue_role_arn : str
+        IAM role ARN assumed by the Glue job.
+    lakehouse_bucket_name : str
+        Name of the S3 lakehouse bucket that stores Silver and Gold data.
+    artefact_bucket_name : str
+        Name of the S3 artefact bucket used for Glue scripts and temp data.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("kms_key_arn", kms_key_arn),
+        ("glue_role_arn", glue_role_arn),
+        ("lakehouse_bucket_name", lakehouse_bucket_name),
+        ("artefact_bucket_name", artefact_bucket_name),
+        ("tags", context["standard_tags"]),
+    ]
+    write_tfvars(glue_job_dir / "terraform.tfvars", items)
+
+
 def destroy_stack(tf_dir: Path) -> None:
     """
     Destroy a Terraform module.
@@ -640,6 +684,7 @@ if __name__ == "__main__":
             action="store_true",
             help="Destroy only the Bronze-to-Silver scheduler stack",
         )
+        group.add_argument("--silver-gold-only", action="store_true", help="Destroy only the Glue Silver-to-Gold job")
         args = parser.parse_args()
 
         repo_root = Path(__file__).resolve().parent.parent
@@ -654,6 +699,7 @@ if __name__ == "__main__":
         glue_catalog_dir = repo_root / "terraform" / "07_glue_catalog"
         glue_bronze_silver_dir = repo_root / "terraform" / "08_glue_bronze_to_silver_job"
         glue_bronze_silver_scheduler_dir = repo_root / "terraform" / "09_glue_bronze_to_silver_scheduler"
+        glue_silver_gold_dir = repo_root / "terraform" / "10_glue_silver_to_gold_job"
 
         if args.context_only:
             destroy_stack_if_state(context_dir)
@@ -777,6 +823,26 @@ if __name__ == "__main__":
             destroy_stack_if_state(glue_bronze_silver_scheduler_dir)
             sys.exit(0)
 
+        if args.silver_gold_only:
+            context = load_context_outputs(context_dir)
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={s3_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            glue_role_arn = get_output(iam_dir, "glue_role_arn")
+            lakehouse_bucket_name = get_output(s3_dir, "lakehouse_bucket_name")
+            artefact_bucket_name = get_output(s3_dir, "artefact_bucket_name")
+            write_glue_silver_gold_tfvars(
+                glue_silver_gold_dir,
+                context,
+                kms_key_arn,
+                glue_role_arn,
+                lakehouse_bucket_name,
+                artefact_bucket_name,
+            )
+            destroy_stack_if_state(glue_silver_gold_dir)
+            sys.exit(0)
+
         context = None
         if tf_state_exists(context_dir):
             context = load_context_outputs(context_dir)
@@ -882,6 +948,24 @@ if __name__ == "__main__":
                 glue_job_arn,
             )
 
+        if context and tf_state_exists(kms_dir) and tf_state_exists(s3_dir) and tf_state_exists(iam_dir) and tf_state_exists(glue_silver_gold_dir):
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={s3_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            glue_role_arn = get_output(iam_dir, "glue_role_arn")
+            lakehouse_bucket_name = get_output(s3_dir, "lakehouse_bucket_name")
+            artefact_bucket_name = get_output(s3_dir, "artefact_bucket_name")
+            write_glue_silver_gold_tfvars(
+                glue_silver_gold_dir,
+                context,
+                kms_key_arn,
+                glue_role_arn,
+                lakehouse_bucket_name,
+                artefact_bucket_name,
+            )
+
+        destroy_stack_if_state(glue_silver_gold_dir)
         destroy_stack_if_state(glue_bronze_silver_scheduler_dir)
         destroy_stack_if_state(glue_bronze_silver_dir)
         destroy_stack_if_state(glue_catalog_dir)

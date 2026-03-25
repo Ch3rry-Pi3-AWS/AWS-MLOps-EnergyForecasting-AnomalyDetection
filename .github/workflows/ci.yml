@@ -27,7 +27,7 @@ jobs:
         run: pytest
 
       - name: Compile Python entry points
-        run: python -m py_compile scripts/deploy.py scripts/destroy.py lambda/ingestion/app.py glue/jobs/bronze_to_silver.py
+        run: python -m py_compile scripts/deploy.py scripts/destroy.py lambda/ingestion/app.py glue/jobs/bronze_to_silver.py glue/jobs/silver_to_gold.py
 
       - name: Run Ruff
         run: ruff check .
@@ -49,7 +49,7 @@ jobs:
 
       - name: Validate Terraform modules
         run: |
-          for dir in terraform/01_project_context terraform/02_kms terraform/03_s3_lakehouse terraform/04_iam_foundation terraform/05_lambda_ingestion terraform/06_eventbridge_scheduler terraform/07_glue_catalog terraform/08_glue_bronze_to_silver_job terraform/09_glue_bronze_to_silver_scheduler; do
+          for dir in terraform/01_project_context terraform/02_kms terraform/03_s3_lakehouse terraform/04_iam_foundation terraform/05_lambda_ingestion terraform/06_eventbridge_scheduler terraform/07_glue_catalog terraform/08_glue_bronze_to_silver_job terraform/09_glue_bronze_to_silver_scheduler terraform/10_glue_silver_to_gold_job; do
             terraform -chdir="$dir" init -backend=false
             terraform -chdir="$dir" validate
           done

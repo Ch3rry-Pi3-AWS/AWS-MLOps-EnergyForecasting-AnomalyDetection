@@ -22,6 +22,7 @@ Notes
     7. Glue catalogue
     8. Glue Bronze-to-Silver job
     9. Glue Bronze-to-Silver scheduler
+    10. Glue Silver-to-Gold job
 
 - Full deployment applies every module in sequence.
 - Targeted deployment flags only apply the named module, assuming its
@@ -40,6 +41,10 @@ Deploy only the Bronze-to-Silver Glue job after its dependencies exist:
 Deploy only the Bronze-to-Silver scheduler after the Glue job exists:
 
 >>> # python scripts/deploy.py --bronze-silver-scheduler-only
+
+Deploy only the Silver-to-Gold Glue job after the Silver layer exists:
+
+>>> # python scripts/deploy.py --silver-gold-only
 """
 
 from __future__ import annotations
@@ -674,6 +679,45 @@ def write_glue_bronze_silver_scheduler_tfvars(
     write_tfvars(scheduler_dir / "terraform.tfvars", items)
 
 
+def write_glue_silver_gold_tfvars(
+    glue_job_dir: Path,
+    context: dict[str, object],
+    kms_key_arn: str,
+    glue_role_arn: str,
+    lakehouse_bucket_name: str,
+    artefact_bucket_name: str,
+) -> None:
+    """
+    Write the live variables file for the Glue Silver-to-Gold job module.
+
+    Parameters
+    ----------
+    glue_job_dir : Path
+        Terraform directory for `10_glue_silver_to_gold_job`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    kms_key_arn : str
+        KMS key ARN used to encrypt the uploaded Glue job script.
+    glue_role_arn : str
+        IAM role ARN assumed by the Glue job.
+    lakehouse_bucket_name : str
+        Name of the S3 lakehouse bucket that stores Silver and Gold data.
+    artefact_bucket_name : str
+        Name of the S3 artefact bucket used for Glue scripts and temp data.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("kms_key_arn", kms_key_arn),
+        ("glue_role_arn", glue_role_arn),
+        ("lakehouse_bucket_name", lakehouse_bucket_name),
+        ("artefact_bucket_name", artefact_bucket_name),
+        ("tags", context["standard_tags"]),
+    ]
+    write_tfvars(glue_job_dir / "terraform.tfvars", items)
+
+
 def deploy_stack(tf_dir: Path) -> None:
     """
     Initialise and apply a Terraform module.
@@ -717,6 +761,7 @@ if __name__ == "__main__":
             action="store_true",
             help="Deploy only the Bronze-to-Silver scheduler stack",
         )
+        group.add_argument("--silver-gold-only", action="store_true", help="Deploy only the Glue Silver-to-Gold job")
         args = parser.parse_args()
 
         repo_root = Path(__file__).resolve().parent.parent
@@ -731,6 +776,7 @@ if __name__ == "__main__":
         glue_catalog_dir = repo_root / "terraform" / "07_glue_catalog"
         glue_bronze_silver_dir = repo_root / "terraform" / "08_glue_bronze_to_silver_job"
         glue_bronze_silver_scheduler_dir = repo_root / "terraform" / "09_glue_bronze_to_silver_scheduler"
+        glue_silver_gold_dir = repo_root / "terraform" / "10_glue_silver_to_gold_job"
 
         if args.context_only:
             write_context_tfvars(context_dir)
@@ -855,6 +901,26 @@ if __name__ == "__main__":
             deploy_stack(glue_bronze_silver_scheduler_dir)
             sys.exit(0)
 
+        if args.silver_gold_only:
+            context = load_context_outputs(context_dir)
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={s3_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            glue_role_arn = get_output(iam_dir, "glue_role_arn")
+            lakehouse_bucket_name = get_output(s3_dir, "lakehouse_bucket_name")
+            artefact_bucket_name = get_output(s3_dir, "artefact_bucket_name")
+            write_glue_silver_gold_tfvars(
+                glue_silver_gold_dir,
+                context,
+                kms_key_arn,
+                glue_role_arn,
+                lakehouse_bucket_name,
+                artefact_bucket_name,
+            )
+            deploy_stack(glue_silver_gold_dir)
+            sys.exit(0)
+
         write_context_tfvars(context_dir)
         deploy_stack(context_dir)
         context = load_context_outputs(context_dir)
@@ -930,6 +996,15 @@ if __name__ == "__main__":
             glue_job_arn,
         )
         deploy_stack(glue_bronze_silver_scheduler_dir)
+        write_glue_silver_gold_tfvars(
+            glue_silver_gold_dir,
+            context,
+            kms_key_arn,
+            glue_role_arn,
+            lakehouse_bucket_name,
+            artefact_bucket_name,
+        )
+        deploy_stack(glue_silver_gold_dir)
 
     except subprocess.CalledProcessError as exc:
         print(f"Command failed: {exc}")
