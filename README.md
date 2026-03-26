@@ -22,7 +22,10 @@ This repository currently covers:
 16. a forecast-endpoint configuration stage plus a SageMaker runner script for deploying the latest approved model
 17. an anomaly-endpoint configuration stage plus a SageMaker runner script for deploying the latest approved anomaly model
 18. a forecast-endpoint operations stage for CloudWatch monitoring and autoscaling
-19. helper deploy and destroy scripts that auto-wire Terraform outputs forward
+19. a model-evaluation stage for threshold-based promotion reports and approval support
+20. an anomaly-endpoint operations stage for CloudWatch monitoring and autoscaling
+21. a SARIMAX forecast-training asset stage plus a SageMaker runner script for training and registration
+22. a DeepAR forecast-training asset stage plus a SageMaker runner script for training, evaluation, and registration
 
 ## Table Of Contents
 
@@ -99,6 +102,14 @@ What exists now:
   exposes the stable anomaly endpoint name, variant configuration, and registry lookup inputs consumed by the anomaly endpoint runner
 - `terraform/18_sagemaker_forecast_endpoint_ops`
   adds CloudWatch alarms and target-tracking autoscaling around the deployed forecast endpoint
+- `terraform/19_sagemaker_model_evaluation`
+  exposes the model-promotion thresholds and evaluation report locations used by the evaluation runner
+- `terraform/20_sagemaker_anomaly_endpoint_ops`
+  adds CloudWatch alarms and target-tracking autoscaling around the deployed anomaly endpoint
+- `terraform/21_sagemaker_forecast_sarimax_training`
+  exposes the SARIMAX forecast-training configuration and source-bundle destination consumed by the SARIMAX training runner
+- `terraform/22_sagemaker_forecast_deepar_training`
+  exposes the DeepAR forecast-training configuration, staged input prefixes, and built-in algorithm image used by the DeepAR runner
 
 The SageMaker split is deliberate:
 
@@ -109,6 +120,10 @@ The SageMaker split is deliberate:
 - `16_sagemaker_forecast_endpoint` keeps the durable endpoint naming and sizing in Terraform, while `scripts/deploy_forecast_endpoint.py` resolves the latest approved forecast model package and performs the live SageMaker create or update action
 - `17_sagemaker_anomaly_endpoint` mirrors that deployment pattern for approved anomaly model packages
 - `18_sagemaker_forecast_endpoint_ops` adds the first serving-operations layer after the stable forecast endpoint already exists
+- `19_sagemaker_model_evaluation` keeps promotion thresholds and evaluation-report destinations in Terraform while the evaluation runner performs the live review and optional approval action
+- `20_sagemaker_anomaly_endpoint_ops` mirrors the forecast serving-operations layer for the stable anomaly endpoint
+- `21_sagemaker_forecast_sarimax_training` adds the first genuinely sequential forecast-training path while still registering into the shared forecast model registry
+- `22_sagemaker_forecast_deepar_training` adds the first built-in neural time-series forecasting path while still feeding the shared forecast model registry and model-evaluation flow
 
 Those two concerns are related, but they are not the same thing. A model
 package group can exist perfectly well without a Studio domain, and a Studio
@@ -252,6 +267,11 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |   |   |-- inference.py
 |   |   |-- requirements.txt
 |   |   `-- train.py
+|   |-- forecast_sarimax_training/
+|   |-- forecast_deepar_training/
+|   |   |-- inference.py
+|   |   |-- requirements.txt
+|   |   `-- train.py
 |   `-- forecast_training/
 |       |-- inference.py
 |       |-- requirements.txt
@@ -265,6 +285,8 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |   |-- invoke_anomaly_endpoint.py
 |   |-- invoke_forecast_endpoint.py
 |   |-- run_anomaly_training.py
+|   |-- run_forecast_sarimax_training.py
+|   |-- run_forecast_deepar_training.py
 |   `-- run_forecast_training.py
 |-- src/
 |   `-- energy_forecasting/
@@ -380,6 +402,17 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |       |-- outputs.tf
 |       |-- terraform.tfvars.example
 |       `-- variables.tf
+|   `-- 20_sagemaker_anomaly_endpoint_ops/
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- terraform.tfvars.example
+|       `-- variables.tf
+|   `-- 21_sagemaker_forecast_sarimax_training/
+|   `-- 22_sagemaker_forecast_deepar_training/
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- terraform.tfvars.example
+|       `-- variables.tf
 |-- tests/
 |   |-- test_bronze_to_silver_job.py
 |   |-- test_lambda_ingestion.py
@@ -404,6 +437,10 @@ Current core files:
   launches the ephemeral SageMaker training job and registers the resulting forecast model package
 - `scripts/run_anomaly_training.py`
   launches the ephemeral SageMaker anomaly-training job and registers the resulting anomaly model package
+- `scripts/run_forecast_sarimax_training.py`
+  launches the ephemeral SageMaker SARIMAX forecast-training job and registers the resulting model package
+- `scripts/run_forecast_deepar_training.py`
+  prepares DeepAR JSON Lines inputs from Gold forecast features, launches the built-in DeepAR training job, writes evaluation metrics, and registers the resulting model package
 - `scripts/deploy_forecast_endpoint.py`
   resolves the latest approved forecast model package and deploys or updates the stable SageMaker endpoint
 - `scripts/deploy_anomaly_endpoint.py`
@@ -426,6 +463,12 @@ Current core files:
   provisions base IAM roles for Lambda, Glue, and SageMaker
 - `terraform/19_sagemaker_model_evaluation/main.tf`
   exposes model-evaluation thresholds and S3 report locations for package promotion reviews
+- `terraform/20_sagemaker_anomaly_endpoint_ops/main.tf`
+  adds anomaly-endpoint CloudWatch alarms and target-tracking autoscaling after the endpoint exists
+- `terraform/21_sagemaker_forecast_sarimax_training/main.tf`
+  exposes the SARIMAX forecast-training source-bundle destination and outputs the SageMaker job configuration used by the SARIMAX runner script
+- `terraform/22_sagemaker_forecast_deepar_training/main.tf`
+  exposes the DeepAR forecast-training input prefixes, algorithm image URI, and runner configuration used by the DeepAR training script
 - `terraform/05_lambda_ingestion/main.tf`
   packages and deploys the ingestion Lambda
 - `terraform/06_eventbridge_scheduler/main.tf`
@@ -460,6 +503,10 @@ Current core files:
   adds forecast-endpoint CloudWatch alarms and target-tracking autoscaling after the endpoint exists
 - `sagemaker/forecast_training/train.py`
   trains the baseline forecast model from Gold forecast features
+- `sagemaker/forecast_sarimax_training/train.py`
+  trains the first sequential SARIMAX forecast model from Gold forecast features
+- `scripts/run_forecast_deepar_training.py`
+  converts Gold forecast rows into DeepAR-compatible series records, evaluates the trained model on a holdout horizon, and persists `evaluation.json` for stage `19`
 - `sagemaker/anomaly_training/train.py`
   trains the baseline anomaly model from Gold anomaly features
 - `src/energy_forecasting/ml/pipeline.py`
@@ -691,6 +738,10 @@ The current module dependency chain is:
 16. `16_sagemaker_forecast_endpoint`
 17. `17_sagemaker_anomaly_endpoint`
 18. `18_sagemaker_forecast_endpoint_ops`
+19. `19_sagemaker_model_evaluation`
+20. `20_sagemaker_anomaly_endpoint_ops`
+21. `21_sagemaker_forecast_sarimax_training`
+22. `22_sagemaker_forecast_deepar_training`
 
 Why this order matters:
 
@@ -772,9 +823,13 @@ python scripts\deploy.py --model-registry-only
 python scripts\deploy.py --studio-domain-only
 python scripts\deploy.py --forecast-training-only
 python scripts\deploy.py --anomaly-training-only
+python scripts\deploy.py --forecast-sarimax-training-only
+python scripts\deploy.py --forecast-deepar-training-only
 python scripts\deploy.py --forecast-endpoint-only
 python scripts\deploy.py --anomaly-endpoint-only
 python scripts\deploy.py --forecast-endpoint-ops-only
+python scripts\deploy.py --model-evaluation-only
+python scripts\deploy.py --anomaly-endpoint-ops-only
 ```
 
 Expected targeted deploy order:
@@ -795,9 +850,13 @@ python scripts\deploy.py --model-registry-only
 python scripts\deploy.py --studio-domain-only
 python scripts\deploy.py --forecast-training-only
 python scripts\deploy.py --anomaly-training-only
+python scripts\deploy.py --forecast-sarimax-training-only
+python scripts\deploy.py --forecast-deepar-training-only
 python scripts\deploy.py --forecast-endpoint-only
 python scripts\deploy.py --anomaly-endpoint-only
 python scripts\deploy.py --forecast-endpoint-ops-only
+python scripts\deploy.py --model-evaluation-only
+python scripts\deploy.py --anomaly-endpoint-ops-only
 ```
 
 The Bronze-to-Silver scheduler is the automation step that removes the need
@@ -906,6 +965,17 @@ Invoke the forecast endpoint directly from the command line:
 uv run python scripts\invoke_forecast_endpoint.py
 ```
 
+Invoke the forecast endpoint using the latest real Gold forecast-feature row:
+
+```powershell
+uv run python scripts\invoke_forecast_endpoint.py --latest-gold-row --show-payload
+```
+
+This reads the most recent row under `gold/forecast_features/`, prints the
+interval context it came from, and then invokes the live forecast endpoint
+with that row's numeric features. That gives you a forecast tied to the latest
+available Gold timestamp rather than the default all-zero smoke-test payload.
+
 Invoke the anomaly endpoint directly from the command line:
 
 ```powershell
@@ -916,6 +986,12 @@ Deploy forecast endpoint monitoring and autoscaling after the endpoint already e
 
 ```powershell
 python scripts\deploy.py --forecast-endpoint-ops-only
+```
+
+Deploy anomaly endpoint monitoring and autoscaling after the endpoint already exists:
+
+```powershell
+python scripts\deploy.py --anomaly-endpoint-ops-only
 ```
 
 Deploy the model-evaluation configuration stage:
@@ -983,9 +1059,13 @@ python scripts\destroy.py --model-registry-only
 python scripts\destroy.py --studio-domain-only
 python scripts\destroy.py --forecast-training-only
 python scripts\destroy.py --anomaly-training-only
+python scripts\destroy.py --forecast-sarimax-training-only
+python scripts\destroy.py --forecast-deepar-training-only
 python scripts\destroy.py --forecast-endpoint-only
 python scripts\destroy.py --anomaly-endpoint-only
 python scripts\destroy.py --forecast-endpoint-ops-only
+python scripts\destroy.py --anomaly-endpoint-ops-only
+python scripts\destroy.py --model-evaluation-only
 python scripts\destroy.py --scheduler-only
 python scripts\destroy.py --glue-catalog-only
 python scripts\destroy.py --lambda-only
@@ -1146,14 +1226,11 @@ enough to prove the SageMaker hosting contract because the inference code
 reindexes missing feature columns to the trained feature list and fills any
 missing values with `0.0`.
 
-The first endpoint-operations stage is forecast-specific:
+The endpoint-operations layers now cover both hosted model families:
 
-1. `terraform/18_sagemaker_forecast_endpoint_ops` attaches target-tracking autoscaling to the live forecast endpoint
-2. it creates CloudWatch alarms for:
-   - high average `ModelLatency`
-   - `Invocation5XXErrors`
-   - `Invocation4XXErrors`
-3. the autoscaling policy uses the built-in SageMaker target metric `SageMakerVariantInvocationsPerInstance`
+1. `terraform/18_sagemaker_forecast_endpoint_ops` attaches target-tracking autoscaling and CloudWatch alarms to the live forecast endpoint
+2. `terraform/20_sagemaker_anomaly_endpoint_ops` mirrors that same autoscaling and alarming pattern for the live anomaly endpoint
+3. both autoscaling policies use the built-in SageMaker target metric `SageMakerVariantInvocationsPerInstance`
 
 The first model-evaluation stage sits between registration and deployment:
 
@@ -1194,7 +1271,10 @@ uv run python scripts\deploy_forecast_endpoint.py
 python scripts\deploy.py --anomaly-endpoint-only
 uv run python scripts\deploy_anomaly_endpoint.py
 uv run python scripts\invoke_forecast_endpoint.py
+uv run python scripts\invoke_forecast_endpoint.py --latest-gold-row --show-payload
+uv run python scripts\invoke_anomaly_endpoint.py
 python scripts\deploy.py --forecast-endpoint-ops-only
+python scripts\deploy.py --anomaly-endpoint-ops-only
 ```
 
 Approve a registered model package before deployment:
@@ -1754,12 +1834,15 @@ terraform -chdir=terraform/16_sagemaker_forecast_endpoint validate
 terraform -chdir=terraform/17_sagemaker_anomaly_endpoint validate
 terraform -chdir=terraform/18_sagemaker_forecast_endpoint_ops validate
 terraform -chdir=terraform/19_sagemaker_model_evaluation validate
+terraform -chdir=terraform/20_sagemaker_anomaly_endpoint_ops validate
+terraform -chdir=terraform/21_sagemaker_forecast_sarimax_training validate
+terraform -chdir=terraform/22_sagemaker_forecast_deepar_training validate
 ```
 
 Python checks:
 
 ```powershell
-uv run python -m py_compile scripts\deploy.py scripts\destroy.py scripts\run_forecast_training.py scripts\run_anomaly_training.py scripts\deploy_forecast_endpoint.py scripts\deploy_anomaly_endpoint.py scripts\invoke_forecast_endpoint.py scripts\invoke_anomaly_endpoint.py scripts\evaluate_model_package.py lambda\ingestion\app.py glue\jobs\bronze_to_silver.py glue\jobs\silver_to_gold.py sagemaker/forecast_training/train.py sagemaker/forecast_training/inference.py sagemaker/anomaly_training/train.py sagemaker/anomaly_training/inference.py
+uv run python -m py_compile scripts\deploy.py scripts\destroy.py scripts\run_forecast_training.py scripts\run_anomaly_training.py scripts\run_forecast_sarimax_training.py scripts\run_forecast_deepar_training.py scripts\deploy_forecast_endpoint.py scripts\deploy_anomaly_endpoint.py scripts\invoke_forecast_endpoint.py scripts\invoke_anomaly_endpoint.py scripts\evaluate_model_package.py lambda\ingestion\app.py glue\jobs\bronze_to_silver.py glue\jobs\silver_to_gold.py sagemaker/forecast_training/train.py sagemaker/forecast_training/inference.py sagemaker/forecast_sarimax_training/train.py sagemaker/forecast_sarimax_training/inference.py sagemaker/anomaly_training/train.py sagemaker/anomaly_training/inference.py
 uv run pytest
 ```
 
@@ -1803,8 +1886,13 @@ aws sagemaker list-domains --query "Domains[?contains(DomainName, 'energyops')].
 - If SageMaker training or Studio model views complain that logs cannot be described, confirm that the SageMaker execution role can call CloudWatch Logs read actions such as `logs:DescribeLogGroups`, `logs:DescribeLogStreams`, and `logs:GetLogEvents` in addition to the standard log-write actions.
 - If SageMaker Studio can open but endpoint or hosted-model detail pages fail, confirm that the SageMaker execution role can call hosted-serving read APIs such as `sagemaker:DescribeModel`, `sagemaker:DescribeEndpoint`, `sagemaker:DescribeEndpointConfig`, `sagemaker:ListModels`, `sagemaker:ListEndpoints`, and `sagemaker:ListEndpointConfigs`.
 - If the SageMaker forecast-training container fails while importing `pandas` or `numpy`, check the pinned versions in `sagemaker/forecast_training/requirements.txt`. The SageMaker scikit-learn image is sensitive to binary compatibility between `numpy`, `pandas`, and `pyarrow`, so that bundle should stay on image-compatible pins rather than broad `>=` ranges.
+- If the SageMaker SARIMAX forecast-training container fails while importing `statsmodels`, `scipy`, `pandas`, or `numpy`, check the pinned versions in `sagemaker/forecast_sarimax_training/requirements.txt`. That stage still uses the SageMaker scikit-learn image, so binary compatibility across the scientific stack matters there too.
+- If `scripts/run_forecast_deepar_training.py` fails before SageMaker training starts, confirm that Gold forecast features exist in S3 and that the local environment has both `boto3` and `pyarrow` available through `uv run`.
+- If the temporary DeepAR evaluation endpoint fails to come online, inspect the training artefacts and the built-in DeepAR model image first. That runner creates and deletes a short-lived evaluation endpoint so it can persist `evaluation.json` for stage `19`.
 - If the SageMaker anomaly-training container fails while importing `pandas` or `numpy`, apply the same rule to `sagemaker/anomaly_training/requirements.txt`, because it uses the same scikit-learn image family.
 - If `scripts/run_forecast_training.py` says a forecast-training Terraform output is missing, reapply `terraform/14_sagemaker_forecast_training` first so the latest module outputs are written to state before launching the SageMaker job.
+- If `scripts/run_forecast_sarimax_training.py` says a SARIMAX forecast-training Terraform output is missing, reapply `terraform/21_sagemaker_forecast_sarimax_training` first so the latest module outputs are written to state before launching the SageMaker job.
+- If `scripts/run_forecast_deepar_training.py` says a DeepAR forecast-training Terraform output is missing, reapply `terraform/22_sagemaker_forecast_deepar_training` first so the latest module outputs are written to state before launching the SageMaker job.
 - If `scripts/run_anomaly_training.py` says an anomaly-training Terraform output is missing, reapply `terraform/15_sagemaker_anomaly_training` first so the latest module outputs are written to state before launching the SageMaker job.
 - If `scripts/evaluate_model_package.py` says a model-evaluation Terraform output is missing, reapply `terraform/19_sagemaker_model_evaluation` first so the latest threshold and report-location outputs are written to state.
 - If `scripts/evaluate_model_package.py` cannot find training metrics for a package, confirm that the corresponding SageMaker training job wrote `evaluation.json` and that the package includes the `training_job_name` customer metadata inserted by the current training runners.
@@ -1812,6 +1900,7 @@ aws sagemaker list-domains --query "Domains[?contains(DomainName, 'energyops')].
 - If `scripts/deploy_anomaly_endpoint.py` says there is no approved anomaly package, approve an anomaly model version in Studio or via `aws sagemaker update-model-package` before deploying the endpoint.
 - If `scripts/invoke_forecast_endpoint.py` or `scripts/invoke_anomaly_endpoint.py` fails, confirm that the endpoint is already `InService` and that the payload is valid JSON.
 - If `terraform/18_sagemaker_forecast_endpoint_ops` fails, confirm that the forecast endpoint already exists. Autoscaling targets and metric alarms attach to the live endpoint and cannot be created meaningfully before the endpoint itself is present.
+- If `terraform/20_sagemaker_anomaly_endpoint_ops` fails, confirm that the anomaly endpoint already exists. Autoscaling targets and metric alarms attach to the live endpoint and cannot be created meaningfully before the endpoint itself is present.
 - If pytest warns about local cache-folder permissions on Windows, that does not necessarily mean the tests failed. Check the actual test result summary.
 
 </details>
@@ -1840,23 +1929,26 @@ Current implemented scope:
 - SageMaker Studio domain and default user profile for browsing Studio-managed model resources
 - forecast-training source staging plus a runner script for SageMaker training and model registration
 - anomaly-training source staging plus a runner script for SageMaker training and model registration
+- SARIMAX forecast-training source staging plus a runner script for sequential SageMaker forecast training and model registration
+- DeepAR forecast-training source staging plus a runner script that prepares DeepAR series inputs, performs post-training holdout evaluation, and registers the resulting model package
 - forecast endpoint configuration plus a runner script for deploying the latest approved forecast model package
 - anomaly endpoint configuration plus a runner script for deploying the latest approved anomaly model package
-- forecast endpoint invocation, monitoring, and autoscaling support
+- forecast and anomaly endpoint invocation support
+- forecast and anomaly endpoint monitoring and autoscaling support
 - model-evaluation configuration plus a runner script for threshold-based promotion reports and optional approval
 
 Recommended next steps:
 
-1. finish the live anomaly-serving path
-2. apply anomaly-endpoint monitoring and autoscaling
-3. add proper sequential forecasting models:
-   `SARIMAX`, `DeepAR`, and `Temporal Fusion Transformer`
-4. add broader anomaly-model comparison, especially forecast-residual anomaly scoring
-5. formalise repeatable endpoint smoke tests
-6. implement Feature Store once the Gold feature contract is stable
-7. add MLflow when multi-model experiment comparison becomes active
-8. add model and data quality monitoring rules
-9. add endpoint authentication, client integration, and retraining rules
+1. reapply IAM if Studio still cannot inspect deployed assets cleanly
+2. add the next sequential forecasting model after SARIMAX:
+   `DeepAR`, then `Temporal Fusion Transformer`
+3. add explicit anomaly-model comparison:
+   forecast-residual scoring, `One-Class SVM`, and autoencoder-based detection
+4. formalise repeatable endpoint smoke tests
+5. implement Feature Store once the Gold feature contract is stable
+6. add MLflow when multi-model experiment comparison becomes active
+7. add model and data quality monitoring rules
+8. add endpoint authentication, client integration, and retraining rules
 
 </details>
 

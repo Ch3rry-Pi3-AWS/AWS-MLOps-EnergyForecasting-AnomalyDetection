@@ -1,0 +1,15 @@
+aws_region                        = "eu-west-2"
+deployment_name                   = "energyops-dev-creative-antelope"
+kms_key_arn                       = "arn:aws:kms:eu-west-2:123456789012:key/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+artefact_bucket_name              = "mlops-artifacts-energyops-dev-creative-antelope"
+lakehouse_bucket_name             = "dl-energyops-dev-creative-antelope"
+sagemaker_role_arn                = "arn:aws:iam::123456789012:role/iam-sagemaker-energyops-dev-creative-antelope"
+forecast_model_package_group_name = "energyops-dev-creative-antelope-forecast-registry"
+
+# Optional overrides
+# job_base_name = "energyops-dev-creative-antelope-forecast-sarimax-train"
+# source_bundle_key = "sagemaker/forecast_sarimax_training/source/forecast_sarimax_training_source.tar.gz"
+# gold_forecast_features_prefix = "gold/forecast_features"
+# training_output_prefix = "sagemaker/forecast_sarimax_training/output"
+# sklearn_image_version = "1.2-1"
+# sklearn_repository_account_id = "764974769150"

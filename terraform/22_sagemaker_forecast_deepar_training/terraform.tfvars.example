@@ -1,0 +1,7 @@
+aws_region                        = "us-east-1"
+deployment_name                   = "energyops-dev-example"
+kms_key_arn                       = "arn:aws:kms:us-east-1:123456789012:key/example"
+artefact_bucket_name              = "mlops-artifacts-energyops-dev-example"
+lakehouse_bucket_name             = "dl-energyops-dev-example"
+sagemaker_role_arn                = "arn:aws:iam::123456789012:role/iam-sagemaker-energyops-dev-example"
+forecast_model_package_group_name = "energyops-dev-example-forecast-registry"

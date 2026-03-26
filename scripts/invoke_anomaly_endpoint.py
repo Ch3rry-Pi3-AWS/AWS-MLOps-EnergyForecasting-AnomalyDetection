@@ -117,13 +117,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Invoke the deployed SageMaker anomaly endpoint with a JSON payload."
     )
-    parser.add_argument("--payload-file", default=None, help="Optional path to a JSON payload file to send directly to the endpoint.")
+    parser.add_argument(
+        "--payload-file",
+        default=None,
+        help="Optional path to a JSON payload file to send directly to the endpoint.",
+    )
     parser.add_argument(
         "--instances-json",
         default=None,
         help="Optional JSON list of records used to build a payload of the form {'instances': [...]}.",
     )
-    parser.add_argument("--show-payload", action="store_true", help="Print the request payload before invoking the endpoint.")
+    parser.add_argument(
+        "--show-payload",
+        action="store_true",
+        help="Print the request payload before invoking the endpoint.",
+    )
     args = parser.parse_args()
 
     if args.payload_file and args.instances_json:

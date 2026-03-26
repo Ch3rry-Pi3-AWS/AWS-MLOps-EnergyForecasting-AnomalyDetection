@@ -1,8 +1,10 @@
 """Invoke the deployed SageMaker forecast endpoint with a JSON payload.
 
-This helper is intentionally lightweight. It reads the stable forecast
-endpoint name from Terraform outputs and sends a JSON request body to
-SageMaker Runtime so the hosted contract can be tested without opening Studio.
+This helper reads the stable forecast endpoint name from Terraform outputs and
+sends a JSON request body to SageMaker Runtime so the hosted contract can be
+tested without opening Studio. It also supports building a payload from the
+latest real Gold forecast-feature row in S3, which makes the returned
+prediction much easier to interpret than the default zero-filled smoke test.
 
 Examples
 --------
@@ -13,16 +15,24 @@ Invoke the endpoint with the default minimal payload:
 Invoke with a custom payload file:
 
 >>> # uv run python scripts/invoke_forecast_endpoint.py --payload-file sample.json
+
+Invoke using the latest real Gold forecast-feature row:
+
+>>> # uv run python scripts/invoke_forecast_endpoint.py --latest-gold-row --show-payload
 """
 
 from __future__ import annotations
 
 import argparse
+import io
 import json
+import math
 import os
 import subprocess
 import sys
+from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -33,6 +43,11 @@ except ModuleNotFoundError as exc:  # pragma: no cover - environment guard
         "boto3 is required to invoke the forecast endpoint locally. Install project dependencies with "
         "`uv sync --dev` and then rerun via `uv run python scripts/invoke_forecast_endpoint.py`."
     ) from exc
+
+try:
+    import pyarrow.parquet as pq
+except ModuleNotFoundError:  # pragma: no cover - optional until latest-gold mode is used
+    pq = None
 
 
 def run_capture_optional(cmd: list[str]) -> str | None:
@@ -105,7 +120,150 @@ def get_output(tf_dir: Path, output_name: str) -> str:
     return value
 
 
-def load_payload(args: argparse.Namespace) -> str:
+def parse_s3_uri(s3_uri: str) -> tuple[str, str]:
+    """Split an S3 URI into bucket and key-prefix components."""
+
+    if not s3_uri.startswith("s3://"):
+        raise ValueError(f"Expected an S3 URI, got: {s3_uri}")
+    bucket_name, key_prefix = s3_uri.removeprefix("s3://").split("/", 1)
+    return bucket_name, key_prefix
+
+
+def normalise_json_value(value: Any) -> Any:
+    """
+    Convert Arrow or Python scalar values into JSON-safe payload values.
+
+    Notes
+    -----
+    The hosted forecast model currently expects numeric features only. When
+    reading a real Gold row from Parquet, keep numeric and boolean values for
+    the payload, convert timestamps to ISO strings for context logging, and
+    collapse null or NaN values to `0.0`.
+    """
+
+    if value is None:
+        return 0.0
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, float):
+        return 0.0 if math.isnan(value) else value
+    return value
+
+
+def list_parquet_keys(s3_client, *, bucket_name: str, key_prefix: str) -> list[str]:
+    """List every Parquet object stored under an S3 prefix."""
+
+    paginator = s3_client.get_paginator("list_objects_v2")
+    keys: list[str] = []
+    for page in paginator.paginate(Bucket=bucket_name, Prefix=key_prefix):
+        for item in page.get("Contents", []):
+            key = item["Key"]
+            if key.endswith(".parquet"):
+                keys.append(key)
+    return sorted(keys)
+
+
+def extract_partition_date(key: str) -> str:
+    """Extract the `settlement_date=YYYY-MM-DD` value from a Gold object key."""
+
+    marker = "settlement_date="
+    if marker not in key:
+        return ""
+    suffix = key.split(marker, 1)[1]
+    return suffix.split("/", 1)[0]
+
+
+def build_latest_gold_payload(
+    s3_client,
+    *,
+    gold_input_s3_uri: str,
+) -> tuple[str, dict[str, Any]]:
+    """
+    Build an invocation payload from the latest Gold forecast-feature row.
+
+    Parameters
+    ----------
+    s3_client : botocore.client.S3
+        S3 client used to read Gold Parquet fragments.
+    gold_input_s3_uri : str
+        S3 prefix containing the Gold forecast-feature dataset.
+
+    Returns
+    -------
+    tuple[str, dict[str, Any]]
+        JSON request payload and a small context dictionary describing the row
+        the payload came from.
+    """
+
+    if pq is None:
+        raise RuntimeError(
+            "pyarrow is required for --latest-gold-row because the helper reads Parquet from S3. "
+            "Run `uv sync --dev` after updating dependencies, then retry."
+        )
+
+    bucket_name, key_prefix = parse_s3_uri(gold_input_s3_uri)
+    parquet_keys = list_parquet_keys(s3_client, bucket_name=bucket_name, key_prefix=key_prefix)
+    if not parquet_keys:
+        raise FileNotFoundError(f"No Gold forecast-feature Parquet files were found under {gold_input_s3_uri}")
+
+    latest_partition = max(extract_partition_date(key) for key in parquet_keys)
+    latest_partition_keys = [key for key in parquet_keys if extract_partition_date(key) == latest_partition]
+
+    latest_row: dict[str, Any] | None = None
+    latest_interval_start = ""
+    latest_source_key = ""
+
+    for key in latest_partition_keys:
+        body = s3_client.get_object(Bucket=bucket_name, Key=key)["Body"].read()
+        table = pq.read_table(io.BytesIO(body))
+        for row in table.to_pylist():
+            interval_start = str(normalise_json_value(row.get("interval_start_utc", "")))
+            if interval_start > latest_interval_start:
+                latest_interval_start = interval_start
+                latest_row = row
+                latest_source_key = key
+
+    if latest_row is None:
+        raise RuntimeError(f"Could not resolve the latest Gold forecast row under {gold_input_s3_uri}")
+
+    excluded_payload_columns = {
+        "demand_mw",
+        "interval_start_utc",
+        "interval_end_utc",
+        "settlement_date",
+        "publish_time_utc",
+        "dataset_name",
+    }
+    payload_record = {
+        key: normalise_json_value(value)
+        for key, value in latest_row.items()
+        if key not in excluded_payload_columns
+        and isinstance(normalise_json_value(value), (int, float, bool))
+    }
+    payload = json.dumps({"instances": [payload_record]})
+    settlement_date = normalise_json_value(latest_row.get("settlement_date"))
+    if settlement_date == 0.0:
+        settlement_date = latest_partition
+    context = {
+        "interval_start_utc": str(normalise_json_value(latest_row.get("interval_start_utc", ""))),
+        "interval_end_utc": str(normalise_json_value(latest_row.get("interval_end_utc", ""))),
+        "settlement_date": str(settlement_date),
+        "publish_time_utc": str(normalise_json_value(latest_row.get("publish_time_utc", ""))),
+        "source_s3_key": latest_source_key,
+    }
+    return payload, context
+
+
+def load_payload(
+    args: argparse.Namespace,
+    *,
+    s3_client,
+    gold_input_s3_uri: str,
+) -> tuple[str, dict[str, Any] | None]:
     """
     Resolve the JSON request body sent to the hosted endpoint.
 
@@ -114,15 +272,18 @@ def load_payload(args: argparse.Namespace) -> str:
     The default payload is intentionally minimal. The inference container
     reindexes missing feature columns to the trained feature set and fills any
     absent values with `0.0`, so a single empty record is enough to prove the
-    serving contract end to end.
+    serving contract end to end. `--latest-gold-row` upgrades that to a real
+    row from the latest Gold feature partition.
     """
 
     if args.payload_file:
-        return Path(args.payload_file).read_text(encoding="utf-8")
+        return Path(args.payload_file).read_text(encoding="utf-8"), None
     if args.instances_json:
         payload = {"instances": json.loads(args.instances_json)}
-        return json.dumps(payload)
-    return json.dumps({"instances": [{}]})
+        return json.dumps(payload), None
+    if args.latest_gold_row:
+        return build_latest_gold_payload(s3_client, gold_input_s3_uri=gold_input_s3_uri)
+    return json.dumps({"instances": [{}]}), None
 
 
 def main() -> None:
@@ -142,21 +303,41 @@ def main() -> None:
         help="Optional JSON list of records used to build a payload of the form {'instances': [...]}.",
     )
     parser.add_argument(
+        "--latest-gold-row",
+        action="store_true",
+        help="Build the request payload from the latest Gold forecast-feature row in S3.",
+    )
+    parser.add_argument(
         "--show-payload",
         action="store_true",
         help="Print the request payload before invoking the endpoint.",
     )
     args = parser.parse_args()
 
-    if args.payload_file and args.instances_json:
-        raise ValueError("Use either --payload-file or --instances-json, not both.")
+    selected_payload_modes = sum(
+        bool(value) for value in (args.payload_file, args.instances_json, args.latest_gold_row)
+    )
+    if selected_payload_modes > 1:
+        raise ValueError("Use only one of --payload-file, --instances-json, or --latest-gold-row.")
 
     load_env_file(REPO_ROOT / ".env")
     endpoint_dir = REPO_ROOT / "terraform" / "16_sagemaker_forecast_endpoint"
+    training_dir = REPO_ROOT / "terraform" / "14_sagemaker_forecast_training"
 
     region = get_output(endpoint_dir, "forecast_endpoint_region")
     endpoint_name = get_output(endpoint_dir, "forecast_endpoint_name")
-    payload = load_payload(args)
+    gold_input_s3_uri = get_output(training_dir, "forecast_training_input_s3_uri")
+
+    s3_client = boto3.client("s3", region_name=region)
+    payload, payload_context = load_payload(
+        args,
+        s3_client=s3_client,
+        gold_input_s3_uri=gold_input_s3_uri,
+    )
+
+    if payload_context is not None:
+        print("Latest Gold row context:")
+        print(json.dumps(payload_context, indent=2))
 
     if args.show_payload:
         print("Request payload:")
