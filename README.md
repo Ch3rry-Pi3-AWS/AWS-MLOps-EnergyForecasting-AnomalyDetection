@@ -29,6 +29,8 @@ This repository currently covers:
 23. a Temporal Fusion Transformer forecast-training asset stage plus a SageMaker runner script for training and registration
 24. an anomaly residual-scoring training asset stage plus a SageMaker runner script for training and registration
 25. an anomaly One-Class SVM training asset stage plus a SageMaker runner script for training and registration
+26. an anomaly autoencoder training asset stage plus a SageMaker runner script for training and registration
+27. a repeatable endpoint smoke-test runner plus lightweight response-contract tests
 
 ## Table Of Contents
 
@@ -134,6 +136,10 @@ What exists now:
   exposes the anomaly residual-scoring training configuration and source-bundle destination consumed by the residual runner
 - `terraform/25_sagemaker_anomaly_one_class_svm_training`
   exposes the anomaly One-Class SVM training configuration and source-bundle destination consumed by the One-Class SVM runner
+- `terraform/26_sagemaker_anomaly_autoencoder_training`
+  exposes the anomaly autoencoder training configuration and source-bundle destination consumed by the autoencoder runner
+- `scripts/run_endpoint_smoke_tests.py`
+  runs repeatable live smoke tests against the deployed forecast and anomaly endpoints using latest real Gold rows where possible
 
 The SageMaker split is deliberate:
 
@@ -151,6 +157,8 @@ The SageMaker split is deliberate:
 - `23_sagemaker_forecast_tft_training` adds a custom PyTorch Temporal Fusion Transformer training path while still feeding the shared forecast model registry and model-evaluation flow
 - `24_sagemaker_anomaly_residual_training` adds the first forecast-residual anomaly scoring path while still registering into the shared anomaly model registry and model-evaluation flow
 - `25_sagemaker_anomaly_one_class_svm_training` adds the first explicit one-class anomaly-model comparison path while still registering into the shared anomaly model registry and model-evaluation flow
+- `26_sagemaker_anomaly_autoencoder_training` adds the neural reconstruction-based anomaly-model comparison path while still registering into the shared anomaly model registry and model-evaluation flow
+- `run_endpoint_smoke_tests.py` adds a repeatable live serving check so endpoint regressions can be caught without relying on ad hoc terminal commands
 
 Those two concerns are related, but they are not the same thing. A model
 package group can exist perfectly well without a Studio domain, and a Studio
@@ -295,6 +303,10 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |   |   |-- inference.py
 |   |   |-- requirements.txt
 |   |   `-- train.py
+|   |-- anomaly_autoencoder_training/
+|   |   |-- inference.py
+|   |   |-- requirements.txt
+|   |   `-- train.py
 |   |-- forecast_tft_training/
 |   |   |-- inference.py
 |   |   |-- requirements.txt
@@ -319,6 +331,8 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |   |-- run_anomaly_training.py
 |   |-- run_anomaly_residual_training.py
 |   |-- run_anomaly_one_class_svm_training.py
+|   |-- run_anomaly_autoencoder_training.py
+|   |-- run_endpoint_smoke_tests.py
 |   |-- run_forecast_sarimax_training.py
 |   |-- run_forecast_deepar_training.py
 |   |-- run_forecast_tft_training.py
@@ -334,6 +348,7 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |       |   `-- public_sources.py
 |       |-- ml/
 |       |   |-- __init__.py
+|       |   |-- endpoint_smoke.py
 |       |   |-- evaluation.py
 |       |   `-- pipeline.py
 |       |-- orchestration/
@@ -451,9 +466,15 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |       |-- outputs.tf
 |       |-- terraform.tfvars.example
 |       `-- variables.tf
+|   `-- 26_sagemaker_anomaly_autoencoder_training/
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- terraform.tfvars.example
+|       `-- variables.tf
 |-- tests/
 |   |-- test_bronze_to_silver_job.py
 |   |-- test_lambda_ingestion.py
+|   |-- test_endpoint_smoke.py
 |   |-- test_model_evaluation.py
 |   |-- test_ml_pipeline.py
 |   |-- test_public_sources.py
@@ -485,6 +506,10 @@ Current core files:
   launches the residual-scoring anomaly training job, learns a residual threshold, and registers the resulting anomaly model package
 - `scripts/run_anomaly_one_class_svm_training.py`
   launches the One-Class SVM anomaly training job, learns a score threshold, and registers the resulting anomaly model package
+- `scripts/run_anomaly_autoencoder_training.py`
+  launches the autoencoder anomaly training job, learns a reconstruction-error threshold, and registers the resulting anomaly model package
+- `scripts/run_endpoint_smoke_tests.py`
+  runs repeatable live smoke tests against the forecast and anomaly endpoints using the latest Gold rows when available
 - `scripts/deploy_forecast_endpoint.py`
   resolves the latest approved forecast model package and deploys or updates the stable SageMaker endpoint
 - `scripts/deploy_anomaly_endpoint.py`
@@ -519,6 +544,10 @@ Current core files:
   exposes the anomaly residual-training source-bundle destination and runner configuration used by the residual anomaly script
 - `terraform/25_sagemaker_anomaly_one_class_svm_training/main.tf`
   exposes the anomaly One-Class SVM source-bundle destination and runner configuration used by the One-Class SVM training script
+- `terraform/26_sagemaker_anomaly_autoencoder_training/main.tf`
+  exposes the anomaly autoencoder source-bundle destination and runner configuration used by the autoencoder training script
+- `src/energy_forecasting/ml/endpoint_smoke.py`
+  keeps the latest-Gold-row payload builders and response-contract validators shared by the live invocation helpers and smoke-test runner
 - `terraform/05_lambda_ingestion/main.tf`
   packages and deploys the ingestion Lambda
 - `terraform/06_eventbridge_scheduler/main.tf`
@@ -801,6 +830,7 @@ The current module dependency chain is:
 23. `23_sagemaker_forecast_tft_training`
 24. `24_sagemaker_anomaly_residual_training`
 25. `25_sagemaker_anomaly_one_class_svm_training`
+26. `26_sagemaker_anomaly_autoencoder_training`
 
 Why this order matters:
 
@@ -890,6 +920,7 @@ python scripts\deploy.py --forecast-deepar-training-only
 python scripts\deploy.py --forecast-tft-training-only
 python scripts\deploy.py --anomaly-residual-training-only
 python scripts\deploy.py --anomaly-one-class-svm-training-only
+python scripts\deploy.py --anomaly-autoencoder-training-only
 python scripts\deploy.py --forecast-endpoint-only
 python scripts\deploy.py --anomaly-endpoint-only
 python scripts\deploy.py --forecast-endpoint-ops-only
@@ -920,6 +951,7 @@ python scripts\deploy.py --forecast-deepar-training-only
 python scripts\deploy.py --forecast-tft-training-only
 python scripts\deploy.py --anomaly-residual-training-only
 python scripts\deploy.py --anomaly-one-class-svm-training-only
+python scripts\deploy.py --anomaly-autoencoder-training-only
 python scripts\deploy.py --forecast-endpoint-only
 python scripts\deploy.py --anomaly-endpoint-only
 python scripts\deploy.py --forecast-endpoint-ops-only
@@ -1132,6 +1164,7 @@ python scripts\destroy.py --forecast-deepar-training-only
 python scripts\destroy.py --forecast-tft-training-only
 python scripts\destroy.py --anomaly-residual-training-only
 python scripts\destroy.py --anomaly-one-class-svm-training-only
+python scripts\destroy.py --anomaly-autoencoder-training-only
 python scripts\destroy.py --forecast-endpoint-only
 python scripts\destroy.py --anomaly-endpoint-only
 python scripts\destroy.py --forecast-endpoint-ops-only
@@ -1911,13 +1944,16 @@ terraform -chdir=terraform/22_sagemaker_forecast_deepar_training validate
 terraform -chdir=terraform/23_sagemaker_forecast_tft_training validate
 terraform -chdir=terraform/24_sagemaker_anomaly_residual_training validate
 terraform -chdir=terraform/25_sagemaker_anomaly_one_class_svm_training validate
+terraform -chdir=terraform/26_sagemaker_anomaly_autoencoder_training validate
 ```
 
 Python checks:
 
 ```powershell
-uv run python -m py_compile scripts\deploy.py scripts\destroy.py scripts\run_forecast_training.py scripts\run_anomaly_training.py scripts\run_forecast_sarimax_training.py scripts\run_forecast_deepar_training.py scripts\run_forecast_tft_training.py scripts\run_anomaly_residual_training.py scripts\run_anomaly_one_class_svm_training.py scripts\deploy_forecast_endpoint.py scripts\deploy_anomaly_endpoint.py scripts\invoke_forecast_endpoint.py scripts\invoke_anomaly_endpoint.py scripts\evaluate_model_package.py lambda\ingestion\app.py glue\jobs\bronze_to_silver.py glue\jobs\silver_to_gold.py sagemaker/forecast_training/train.py sagemaker/forecast_training/inference.py sagemaker/forecast_sarimax_training/train.py sagemaker/forecast_sarimax_training/inference.py sagemaker/forecast_tft_training/train.py sagemaker/forecast_tft_training/inference.py sagemaker/anomaly_training/train.py sagemaker/anomaly_training/inference.py sagemaker/anomaly_residual_training/train.py sagemaker/anomaly_residual_training/inference.py sagemaker/anomaly_one_class_svm_training/train.py sagemaker/anomaly_one_class_svm_training/inference.py
+uv run python -m py_compile scripts\deploy.py scripts\destroy.py scripts\run_forecast_training.py scripts\run_anomaly_training.py scripts\run_forecast_sarimax_training.py scripts\run_forecast_deepar_training.py scripts\run_forecast_tft_training.py scripts\run_anomaly_residual_training.py scripts\run_anomaly_one_class_svm_training.py scripts\run_anomaly_autoencoder_training.py scripts\deploy_forecast_endpoint.py scripts\deploy_anomaly_endpoint.py scripts\invoke_forecast_endpoint.py scripts\invoke_anomaly_endpoint.py scripts\evaluate_model_package.py lambda\ingestion\app.py glue\jobs\bronze_to_silver.py glue\jobs\silver_to_gold.py sagemaker/forecast_training/train.py sagemaker/forecast_training/inference.py sagemaker/forecast_sarimax_training/train.py sagemaker/forecast_sarimax_training/inference.py sagemaker/forecast_tft_training/train.py sagemaker/forecast_tft_training/inference.py sagemaker/anomaly_training/train.py sagemaker/anomaly_training/inference.py sagemaker/anomaly_residual_training/train.py sagemaker/anomaly_residual_training/inference.py sagemaker/anomaly_one_class_svm_training/train.py sagemaker/anomaly_one_class_svm_training/inference.py sagemaker/anomaly_autoencoder_training/train.py sagemaker/anomaly_autoencoder_training/inference.py
 uv run pytest
+uv run python scripts\run_endpoint_smoke_tests.py --forecast-only --show-payload
+uv run python scripts\run_endpoint_smoke_tests.py --anomaly-only --show-payload
 ```
 
 AWS resource inspection examples:
@@ -1966,6 +2002,7 @@ aws sagemaker list-domains --query "Domains[?contains(DomainName, 'energyops')].
 - If the TFT training container fails while installing dependencies, review `sagemaker/forecast_tft_training/requirements.txt` first. That stage relies on the SageMaker PyTorch container plus pinned `lightning` and `pytorch-forecasting` versions inside the uploaded source bundle.
 - If the anomaly residual-scoring stage flags too many or too few anomalies, inspect the learned residual threshold in `evaluation.json` first. That stage promotes based on anomaly rate, so threshold drift shows up there before deployment.
 - If the One-Class SVM stage flags too many or too few anomalies, inspect the learned `score_threshold` in `evaluation.json` first and remember that the current stage still uses a simple anomaly-rate gate rather than labelled precision or recall.
+- If the autoencoder stage flags too many or too few anomalies, inspect the learned reconstruction-error threshold in `evaluation.json` first and confirm that the Gold anomaly features are still numerically stable after standardisation.
 - If the SageMaker anomaly-training container fails while importing `pandas` or `numpy`, apply the same rule to `sagemaker/anomaly_training/requirements.txt`, because it uses the same scikit-learn image family.
 - If `scripts/run_forecast_training.py` says a forecast-training Terraform output is missing, reapply `terraform/14_sagemaker_forecast_training` first so the latest module outputs are written to state before launching the SageMaker job.
 - If `scripts/run_forecast_sarimax_training.py` says a SARIMAX forecast-training Terraform output is missing, reapply `terraform/21_sagemaker_forecast_sarimax_training` first so the latest module outputs are written to state before launching the SageMaker job.
@@ -1973,12 +2010,14 @@ aws sagemaker list-domains --query "Domains[?contains(DomainName, 'energyops')].
 - If `scripts/run_forecast_tft_training.py` says a TFT forecast-training Terraform output is missing, reapply `terraform/23_sagemaker_forecast_tft_training` first so the latest module outputs are written to state before launching the SageMaker job.
 - If `scripts/run_anomaly_residual_training.py` says an anomaly residual-training Terraform output is missing, reapply `terraform/24_sagemaker_anomaly_residual_training` first so the latest module outputs are written to state before launching the SageMaker job.
 - If `scripts/run_anomaly_one_class_svm_training.py` says an anomaly One-Class SVM Terraform output is missing, reapply `terraform/25_sagemaker_anomaly_one_class_svm_training` first so the latest module outputs are written to state before launching the SageMaker job.
+- If `scripts/run_anomaly_autoencoder_training.py` says an anomaly autoencoder Terraform output is missing, reapply `terraform/26_sagemaker_anomaly_autoencoder_training` first so the latest module outputs are written to state before launching the SageMaker job.
 - If `scripts/run_anomaly_training.py` says an anomaly-training Terraform output is missing, reapply `terraform/15_sagemaker_anomaly_training` first so the latest module outputs are written to state before launching the SageMaker job.
 - If `scripts/evaluate_model_package.py` says a model-evaluation Terraform output is missing, reapply `terraform/19_sagemaker_model_evaluation` first so the latest threshold and report-location outputs are written to state.
 - If `scripts/evaluate_model_package.py` cannot find training metrics for a package, confirm that the corresponding SageMaker training job wrote `evaluation.json` and that the package includes the `training_job_name` customer metadata inserted by the current training runners.
 - If `scripts/deploy_forecast_endpoint.py` says there is no approved forecast package, approve a forecast model version in Studio or via `aws sagemaker update-model-package` before deploying the endpoint.
 - If `scripts/deploy_anomaly_endpoint.py` says there is no approved anomaly package, approve an anomaly model version in Studio or via `aws sagemaker update-model-package` before deploying the endpoint.
 - If `scripts/invoke_forecast_endpoint.py` or `scripts/invoke_anomaly_endpoint.py` fails, confirm that the endpoint is already `InService` and that the payload is valid JSON.
+- If `scripts/run_endpoint_smoke_tests.py` fails while building a latest-Gold-row payload, confirm that the relevant Gold dataset exists in S3 and that the SageMaker endpoint is already `InService`.
 - If `terraform/18_sagemaker_forecast_endpoint_ops` fails, confirm that the forecast endpoint already exists. Autoscaling targets and metric alarms attach to the live endpoint and cannot be created meaningfully before the endpoint itself is present.
 - If `terraform/20_sagemaker_anomaly_endpoint_ops` fails, confirm that the anomaly endpoint already exists. Autoscaling targets and metric alarms attach to the live endpoint and cannot be created meaningfully before the endpoint itself is present.
 - If pytest warns about local cache-folder permissions on Windows, that does not necessarily mean the tests failed. Check the actual test result summary.
@@ -2014,6 +2053,8 @@ Current implemented scope:
 - TFT forecast-training source staging plus a runner script that packages a custom PyTorch Temporal Fusion Transformer training bundle and registers the resulting model package
 - anomaly residual-scoring source staging plus a runner script that learns a demand-regression residual threshold and registers the resulting anomaly model package
 - anomaly One-Class SVM source staging plus a runner script that learns a score threshold and registers the resulting anomaly model package
+- anomaly autoencoder source staging plus a runner script that learns a reconstruction-error threshold and registers the resulting anomaly model package
+- repeatable endpoint smoke tests for both live SageMaker endpoints using latest real Gold rows
 - forecast endpoint configuration plus a runner script for deploying the latest approved forecast model package
 - anomaly endpoint configuration plus a runner script for deploying the latest approved anomaly model package
 - forecast and anomaly endpoint invocation support
@@ -2023,14 +2064,12 @@ Current implemented scope:
 Recommended next steps:
 
 1. reapply IAM if Studio still cannot inspect deployed assets cleanly
-2. add the next explicit anomaly-model comparison:
-   autoencoder-based detection
-3. formalise repeatable endpoint smoke tests
-4. compare approved anomaly candidates before switching the live anomaly endpoint
-5. implement Feature Store once the Gold feature contract is stable
-6. add MLflow when multi-model experiment comparison becomes active
-7. add model and data quality monitoring rules
-8. add endpoint authentication, client integration, and retraining rules
+2. run and compare the residual, One-Class SVM, and autoencoder anomaly candidates
+3. compare approved anomaly candidates before switching the live anomaly endpoint
+4. implement Feature Store once the Gold feature contract is stable
+5. add MLflow when multi-model experiment comparison becomes active
+6. add model and data quality monitoring rules
+7. add endpoint authentication, client integration, and retraining rules
 
 </details>
 

@@ -38,6 +38,7 @@ Notes
     23. SageMaker forecast TFT training assets
     24. SageMaker anomaly residual-scoring training assets
     25. SageMaker anomaly One-Class SVM training assets
+    26. SageMaker anomaly autoencoder training assets
 
 - Full deployment applies every module in sequence.
 - Targeted deployment flags only apply the named module, assuming its
@@ -100,6 +101,10 @@ Deploy only the anomaly residual-scoring training asset stage after model regist
 Deploy only the anomaly One-Class SVM training asset stage after model registry exists:
 
 >>> # python scripts/deploy.py --anomaly-one-class-svm-training-only
+
+Deploy only the anomaly autoencoder training asset stage after model registry exists:
+
+>>> # python scripts/deploy.py --anomaly-autoencoder-training-only
 
 Deploy only the forecast-endpoint configuration after model registry exists:
 
@@ -1173,6 +1178,48 @@ def write_anomaly_one_class_svm_training_tfvars(
     write_tfvars(training_dir / "terraform.tfvars", items)
 
 
+def write_anomaly_autoencoder_training_tfvars(
+    training_dir: Path,
+    context: dict[str, object],
+    kms_key_arn: str,
+    artefact_bucket_name: str,
+    lakehouse_bucket_name: str,
+    sagemaker_role_arn: str,
+    anomaly_model_package_group_name: str,
+) -> None:
+    """
+    Write the live variables file for the anomaly autoencoder asset module.
+
+    Parameters
+    ----------
+    training_dir : Path
+        Terraform directory for `26_sagemaker_anomaly_autoencoder_training`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    kms_key_arn : str
+        KMS key ARN used to encrypt the uploaded source bundle and outputs.
+    artefact_bucket_name : str
+        Name of the S3 artefact bucket used for training code and outputs.
+    lakehouse_bucket_name : str
+        Name of the S3 lakehouse bucket containing Gold anomaly features.
+    sagemaker_role_arn : str
+        IAM role ARN assumed by the SageMaker training job.
+    anomaly_model_package_group_name : str
+        Name of the anomaly model package group used for registration.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("kms_key_arn", kms_key_arn),
+        ("artefact_bucket_name", artefact_bucket_name),
+        ("lakehouse_bucket_name", lakehouse_bucket_name),
+        ("sagemaker_role_arn", sagemaker_role_arn),
+        ("anomaly_model_package_group_name", anomaly_model_package_group_name),
+    ]
+    write_tfvars(training_dir / "terraform.tfvars", items)
+
+
 def write_forecast_endpoint_tfvars(
     endpoint_dir: Path,
     context: dict[str, object],
@@ -1397,6 +1444,7 @@ if __name__ == "__main__":
         group.add_argument("--forecast-tft-training-only", action="store_true", help="Deploy only the SageMaker forecast TFT training asset stack")
         group.add_argument("--anomaly-residual-training-only", action="store_true", help="Deploy only the SageMaker anomaly residual-scoring training asset stack")
         group.add_argument("--anomaly-one-class-svm-training-only", action="store_true", help="Deploy only the SageMaker anomaly One-Class SVM training asset stack")
+        group.add_argument("--anomaly-autoencoder-training-only", action="store_true", help="Deploy only the SageMaker anomaly autoencoder training asset stack")
         group.add_argument("--forecast-endpoint-only", action="store_true", help="Deploy only the SageMaker forecast endpoint configuration stack")
         group.add_argument("--anomaly-endpoint-only", action="store_true", help="Deploy only the SageMaker anomaly endpoint configuration stack")
         group.add_argument("--forecast-endpoint-ops-only", action="store_true", help="Deploy only the SageMaker forecast endpoint monitoring and autoscaling stack")
@@ -1432,6 +1480,7 @@ if __name__ == "__main__":
         forecast_tft_training_dir = repo_root / "terraform" / "23_sagemaker_forecast_tft_training"
         anomaly_residual_training_dir = repo_root / "terraform" / "24_sagemaker_anomaly_residual_training"
         anomaly_one_class_svm_training_dir = repo_root / "terraform" / "25_sagemaker_anomaly_one_class_svm_training"
+        anomaly_autoencoder_training_dir = repo_root / "terraform" / "26_sagemaker_anomaly_autoencoder_training"
 
         if args.context_only:
             write_context_tfvars(context_dir)
@@ -1772,6 +1821,29 @@ if __name__ == "__main__":
             deploy_stack(anomaly_one_class_svm_training_dir)
             sys.exit(0)
 
+        if args.anomaly_autoencoder_training_only:
+            context = load_context_outputs(context_dir)
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={s3_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            run(["terraform", f"-chdir={model_registry_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            artefact_bucket_name = get_output(s3_dir, "artefact_bucket_name")
+            lakehouse_bucket_name = get_output(s3_dir, "lakehouse_bucket_name")
+            sagemaker_role_arn = get_output(iam_dir, "sagemaker_role_arn")
+            anomaly_model_package_group_name = get_output(model_registry_dir, "anomaly_model_package_group_name")
+            write_anomaly_autoencoder_training_tfvars(
+                anomaly_autoencoder_training_dir,
+                context,
+                kms_key_arn,
+                artefact_bucket_name,
+                lakehouse_bucket_name,
+                sagemaker_role_arn,
+                anomaly_model_package_group_name,
+            )
+            deploy_stack(anomaly_autoencoder_training_dir)
+            sys.exit(0)
+
         if args.forecast_endpoint_only:
             context = load_context_outputs(context_dir)
             run(["terraform", f"-chdir={kms_dir}", "init"])
@@ -2068,6 +2140,16 @@ if __name__ == "__main__":
             get_output(model_registry_dir, "anomaly_model_package_group_name"),
         )
         deploy_stack(anomaly_one_class_svm_training_dir)
+        write_anomaly_autoencoder_training_tfvars(
+            anomaly_autoencoder_training_dir,
+            context,
+            kms_key_arn,
+            artefact_bucket_name,
+            lakehouse_bucket_name,
+            sagemaker_role_arn,
+            get_output(model_registry_dir, "anomaly_model_package_group_name"),
+        )
+        deploy_stack(anomaly_autoencoder_training_dir)
 
     except subprocess.CalledProcessError as exc:
         print(f"Command failed: {exc}")

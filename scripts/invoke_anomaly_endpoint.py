@@ -8,6 +8,10 @@ Examples
 Invoke the endpoint with the default minimal payload:
 
 >>> # uv run python scripts/invoke_anomaly_endpoint.py
+
+Invoke using the latest real Gold anomaly-feature row:
+
+>>> # uv run python scripts/invoke_anomaly_endpoint.py --latest-gold-row --show-payload
 """
 
 from __future__ import annotations
@@ -18,11 +22,14 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 try:
     import boto3
+    from botocore.config import Config
+    from botocore.exceptions import ReadTimeoutError
 except ModuleNotFoundError as exc:  # pragma: no cover - environment guard
     raise SystemExit(
         "boto3 is required to invoke the anomaly endpoint locally. Install project dependencies with "
@@ -100,15 +107,50 @@ def get_output(tf_dir: Path, output_name: str) -> str:
     return value
 
 
-def load_payload(args: argparse.Namespace) -> str:
+def build_latest_gold_payload(
+    s3_client,
+    *,
+    gold_input_s3_uri: str,
+) -> tuple[str, dict[str, Any]]:
+    """Build an invocation payload from the latest Gold anomaly-feature row."""
+
+    from energy_forecasting.ml.endpoint_smoke import build_latest_row_payload_from_s3
+
+    return build_latest_row_payload_from_s3(
+        s3_client,
+        dataset_s3_uri=gold_input_s3_uri,
+        excluded_columns={
+            "interval_start_utc",
+            "interval_end_utc",
+            "settlement_date",
+            "publish_time_utc",
+            "dataset_name",
+        },
+        context_columns=[
+            "interval_start_utc",
+            "interval_end_utc",
+            "settlement_date",
+            "publish_time_utc",
+        ],
+    )
+
+
+def load_payload(
+    args: argparse.Namespace,
+    *,
+    s3_client,
+    gold_input_s3_uri: str,
+) -> tuple[str, dict[str, Any] | None]:
     """Resolve the JSON request body sent to the hosted anomaly endpoint."""
 
     if args.payload_file:
-        return Path(args.payload_file).read_text(encoding="utf-8")
+        return Path(args.payload_file).read_text(encoding="utf-8"), None
     if args.instances_json:
         payload = {"instances": json.loads(args.instances_json)}
-        return json.dumps(payload)
-    return json.dumps({"instances": [{}]})
+        return json.dumps(payload), None
+    if args.latest_gold_row:
+        return build_latest_gold_payload(s3_client, gold_input_s3_uri=gold_input_s3_uri)
+    return json.dumps({"instances": [{}]}), None
 
 
 def main() -> None:
@@ -128,33 +170,68 @@ def main() -> None:
         help="Optional JSON list of records used to build a payload of the form {'instances': [...]}.",
     )
     parser.add_argument(
+        "--latest-gold-row",
+        action="store_true",
+        help="Build the request payload from the latest Gold anomaly-feature row in S3.",
+    )
+    parser.add_argument(
         "--show-payload",
         action="store_true",
         help="Print the request payload before invoking the endpoint.",
     )
+    parser.add_argument(
+        "--read-timeout-seconds",
+        type=int,
+        default=300,
+        help="Botocore read timeout used while waiting for the anomaly endpoint response.",
+    )
     args = parser.parse_args()
 
-    if args.payload_file and args.instances_json:
-        raise ValueError("Use either --payload-file or --instances-json, not both.")
+    selected_payload_modes = sum(
+        bool(value) for value in (args.payload_file, args.instances_json, args.latest_gold_row)
+    )
+    if selected_payload_modes > 1:
+        raise ValueError("Use only one of --payload-file, --instances-json, or --latest-gold-row.")
 
     load_env_file(REPO_ROOT / ".env")
     endpoint_dir = REPO_ROOT / "terraform" / "17_sagemaker_anomaly_endpoint"
+    training_dir = REPO_ROOT / "terraform" / "15_sagemaker_anomaly_training"
 
     region = get_output(endpoint_dir, "anomaly_endpoint_region")
     endpoint_name = get_output(endpoint_dir, "anomaly_endpoint_name")
-    payload = load_payload(args)
+    gold_input_s3_uri = get_output(training_dir, "anomaly_training_input_s3_uri")
+    s3_client = boto3.client("s3", region_name=region)
+    payload, payload_context = load_payload(
+        args,
+        s3_client=s3_client,
+        gold_input_s3_uri=gold_input_s3_uri,
+    )
+
+    if payload_context is not None:
+        print("Latest Gold row context:")
+        print(json.dumps(payload_context, indent=2))
 
     if args.show_payload:
         print("Request payload:")
         print(payload)
 
-    runtime_client = boto3.client("sagemaker-runtime", region_name=region)
-    response = runtime_client.invoke_endpoint(
-        EndpointName=endpoint_name,
-        ContentType="application/json",
-        Accept="application/json",
-        Body=payload.encode("utf-8"),
+    runtime_client = boto3.client(
+        "sagemaker-runtime",
+        region_name=region,
+        config=Config(read_timeout=args.read_timeout_seconds, connect_timeout=60, retries={"max_attempts": 2}),
     )
+    try:
+        response = runtime_client.invoke_endpoint(
+            EndpointName=endpoint_name,
+            ContentType="application/json",
+            Accept="application/json",
+            Body=payload.encode("utf-8"),
+        )
+    except ReadTimeoutError as exc:
+        raise RuntimeError(
+            f"Anomaly endpoint {endpoint_name} did not respond before the configured read timeout. "
+            "Retry with a higher --read-timeout-seconds value."
+        ) from exc
     body = response["Body"].read().decode("utf-8")
     print(body)
 
