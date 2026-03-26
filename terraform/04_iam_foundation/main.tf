@@ -68,7 +68,7 @@ data "aws_iam_policy_document" "sagemaker_assume_role" {
 data "aws_iam_policy_document" "lambda_data_access" {
   statement {
     sid       = "BucketList"
-    actions   = ["s3:GetBucketLocation", "s3:ListBucket"]
+    actions   = ["s3:GetBucketAcl", "s3:GetBucketLocation", "s3:ListBucket"]
     resources = local.bucket_arns
   }
 
@@ -144,7 +144,7 @@ data "aws_iam_policy_document" "glue_data_access" {
 data "aws_iam_policy_document" "sagemaker_execution" {
   statement {
     sid       = "BucketList"
-    actions   = ["s3:GetBucketLocation", "s3:ListBucket"]
+    actions   = ["s3:GetBucketAcl", "s3:GetBucketLocation", "s3:ListBucket"]
     resources = local.bucket_arns
   }
 
