@@ -53,9 +53,6 @@ This repository currently covers:
 
 ## Overview
 
-<details open>
-<summary>Show or hide section</summary>
-
 The project is intended to become a realistic AWS portfolio implementation for:
 
 - energy-demand forecasting
@@ -63,6 +60,24 @@ The project is intended to become a realistic AWS portfolio implementation for:
 - uncertainty-aware scenario analysis
 
 The architecture is intentionally being built in disciplined stages rather than all at once.
+
+Upstream data sources used by the ingestion layer:
+
+- [Elexon Insights Solution API Developer Portal](https://developer.data.elexon.co.uk/)
+  for GB electricity market datasets, including the public `ITSDO` transmission-system-demand outturn feed exposed by Elexon’s API platform
+- [Elexon public API base](https://data.elexon.co.uk/)
+  which is the live API host used by the ingestion Lambda for demand retrieval
+- [Open-Meteo Weather Forecast API documentation](https://open-meteo.com/en/docs)
+  for public hourly weather forecast data such as temperature, relative humidity, and wind speed used in the feature-engineering pipeline
+- [Open-Meteo forecast endpoint](https://api.open-meteo.com/v1/forecast)
+  which is the live weather-forecast endpoint used by the ingestion Lambda
+
+In practical terms, the current ingestion Lambda pulls:
+
+- electricity demand from Elexon’s public demand dataset API
+- weather forecast covariates from Open-Meteo’s `/v1/forecast` endpoint
+
+Those are the two external upstream systems that currently feed the Bronze layer.
 
 What exists now:
 
@@ -166,12 +181,7 @@ On each successful invocation, the Lambda:
 
 The design goal is to preserve raw upstream payloads first, then add Glue catalogue and transformation layers on top of stable Bronze storage.
 
-</details>
-
 ## Workflow Diagrams
-
-<details open>
-<summary>Show or hide section</summary>
 
 Current infrastructure and ingestion workflow:
 
@@ -242,8 +252,6 @@ flowchart LR
     G --> H[Model registry and endpoint]
     H --> I[CloudWatch and model monitoring]
 ```
-
-</details>
 
 ## Repository Structure
 
@@ -1957,20 +1965,13 @@ Recommended next steps:
 <details>
 <summary>Show or hide section</summary>
 
-- Elexon Developer Portal  
-  https://developer.data.elexon.co.uk/
-- Elexon public Insights API base  
-  https://data.elexon.co.uk/
-- Open-Meteo Forecast API  
-  https://api.open-meteo.com/v1/forecast
-- AWS Lambda  
-  https://docs.aws.amazon.com/lambda/
-- AWS EventBridge Scheduler  
-  https://docs.aws.amazon.com/scheduler/
-- AWS KMS  
-  https://docs.aws.amazon.com/kms/
-- Amazon S3  
-  https://docs.aws.amazon.com/s3/
+- [Elexon Developer Portal](https://developer.data.elexon.co.uk/)
+- [Elexon public Insights API base](https://data.elexon.co.uk/)
+- [Open-Meteo Forecast API](https://api.open-meteo.com/v1/forecast)
+- [AWS Lambda](https://docs.aws.amazon.com/lambda/)
+- [AWS EventBridge Scheduler](https://docs.aws.amazon.com/scheduler/)
+- [AWS KMS](https://docs.aws.amazon.com/kms/)
+- [Amazon S3](https://docs.aws.amazon.com/s3/)
 
 </details>
 

@@ -1,0 +1,27 @@
+{
+  "instances": [
+    {
+      "settlement_period": 38,
+      "demand_mw": 27750,
+      "temperature_2m": 11.5,
+      "relative_humidity_2m": 72,
+      "wind_speed_10m": 18.0,
+      "latitude": 51.5072,
+      "longitude": -0.1276,
+      "interval_hour": 18,
+      "day_of_week": 4,
+      "month_of_year": 3,
+      "is_weekend": 0,
+      "lag_1_demand_mw": 27450,
+      "lag_2_demand_mw": 27280,
+      "lag_48_demand_mw": 27615,
+      "rolling_mean_48_demand_mw": 26890,
+      "rolling_min_48_demand_mw": 23100,
+      "rolling_max_48_demand_mw": 31200,
+      "rolling_stddev_48_demand_mw": 850,
+      "demand_minus_rolling_mean_mw": 860,
+      "demand_to_rolling_mean_ratio": 1.031981,
+      "rolling_z_score": 1.011765
+    }
+  ]
+}
