@@ -26,6 +26,9 @@ This repository currently covers:
 20. an anomaly-endpoint operations stage for CloudWatch monitoring and autoscaling
 21. a SARIMAX forecast-training asset stage plus a SageMaker runner script for training and registration
 22. a DeepAR forecast-training asset stage plus a SageMaker runner script for training, evaluation, and registration
+23. a Temporal Fusion Transformer forecast-training asset stage plus a SageMaker runner script for training and registration
+24. an anomaly residual-scoring training asset stage plus a SageMaker runner script for training and registration
+25. an anomaly One-Class SVM training asset stage plus a SageMaker runner script for training and registration
 
 ## Table Of Contents
 
@@ -125,6 +128,12 @@ What exists now:
   exposes the SARIMAX forecast-training configuration and source-bundle destination consumed by the SARIMAX training runner
 - `terraform/22_sagemaker_forecast_deepar_training`
   exposes the DeepAR forecast-training configuration, staged input prefixes, and built-in algorithm image used by the DeepAR runner
+- `terraform/23_sagemaker_forecast_tft_training`
+  exposes the TFT forecast-training configuration and source-bundle destination consumed by the TFT runner
+- `terraform/24_sagemaker_anomaly_residual_training`
+  exposes the anomaly residual-scoring training configuration and source-bundle destination consumed by the residual runner
+- `terraform/25_sagemaker_anomaly_one_class_svm_training`
+  exposes the anomaly One-Class SVM training configuration and source-bundle destination consumed by the One-Class SVM runner
 
 The SageMaker split is deliberate:
 
@@ -139,6 +148,9 @@ The SageMaker split is deliberate:
 - `20_sagemaker_anomaly_endpoint_ops` mirrors the forecast serving-operations layer for the stable anomaly endpoint
 - `21_sagemaker_forecast_sarimax_training` adds the first genuinely sequential forecast-training path while still registering into the shared forecast model registry
 - `22_sagemaker_forecast_deepar_training` adds the first built-in neural time-series forecasting path while still feeding the shared forecast model registry and model-evaluation flow
+- `23_sagemaker_forecast_tft_training` adds a custom PyTorch Temporal Fusion Transformer training path while still feeding the shared forecast model registry and model-evaluation flow
+- `24_sagemaker_anomaly_residual_training` adds the first forecast-residual anomaly scoring path while still registering into the shared anomaly model registry and model-evaluation flow
+- `25_sagemaker_anomaly_one_class_svm_training` adds the first explicit one-class anomaly-model comparison path while still registering into the shared anomaly model registry and model-evaluation flow
 
 Those two concerns are related, but they are not the same thing. A model
 package group can exist perfectly well without a Studio domain, and a Studio
@@ -275,6 +287,18 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |   |   |-- inference.py
 |   |   |-- requirements.txt
 |   |   `-- train.py
+|   |-- anomaly_residual_training/
+|   |   |-- inference.py
+|   |   |-- requirements.txt
+|   |   `-- train.py
+|   |-- anomaly_one_class_svm_training/
+|   |   |-- inference.py
+|   |   |-- requirements.txt
+|   |   `-- train.py
+|   |-- forecast_tft_training/
+|   |   |-- inference.py
+|   |   |-- requirements.txt
+|   |   `-- train.py
 |   |-- forecast_sarimax_training/
 |   |-- forecast_deepar_training/
 |   |   |-- inference.py
@@ -293,8 +317,11 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |   |-- invoke_anomaly_endpoint.py
 |   |-- invoke_forecast_endpoint.py
 |   |-- run_anomaly_training.py
+|   |-- run_anomaly_residual_training.py
+|   |-- run_anomaly_one_class_svm_training.py
 |   |-- run_forecast_sarimax_training.py
 |   |-- run_forecast_deepar_training.py
+|   |-- run_forecast_tft_training.py
 |   `-- run_forecast_training.py
 |-- src/
 |   `-- energy_forecasting/
@@ -417,6 +444,9 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |       `-- variables.tf
 |   `-- 21_sagemaker_forecast_sarimax_training/
 |   `-- 22_sagemaker_forecast_deepar_training/
+|   `-- 23_sagemaker_forecast_tft_training/
+|   `-- 24_sagemaker_anomaly_residual_training/
+|   `-- 25_sagemaker_anomaly_one_class_svm_training/
 |       |-- main.tf
 |       |-- outputs.tf
 |       |-- terraform.tfvars.example
@@ -449,6 +479,12 @@ Current core files:
   launches the ephemeral SageMaker SARIMAX forecast-training job and registers the resulting model package
 - `scripts/run_forecast_deepar_training.py`
   prepares DeepAR JSON Lines inputs from Gold forecast features, launches the built-in DeepAR training job, writes evaluation metrics, and registers the resulting model package
+- `scripts/run_forecast_tft_training.py`
+  packages the custom TFT training bundle, launches the SageMaker PyTorch job, and registers the resulting forecast model package
+- `scripts/run_anomaly_residual_training.py`
+  launches the residual-scoring anomaly training job, learns a residual threshold, and registers the resulting anomaly model package
+- `scripts/run_anomaly_one_class_svm_training.py`
+  launches the One-Class SVM anomaly training job, learns a score threshold, and registers the resulting anomaly model package
 - `scripts/deploy_forecast_endpoint.py`
   resolves the latest approved forecast model package and deploys or updates the stable SageMaker endpoint
 - `scripts/deploy_anomaly_endpoint.py`
@@ -477,6 +513,12 @@ Current core files:
   exposes the SARIMAX forecast-training source-bundle destination and outputs the SageMaker job configuration used by the SARIMAX runner script
 - `terraform/22_sagemaker_forecast_deepar_training/main.tf`
   exposes the DeepAR forecast-training input prefixes, algorithm image URI, and runner configuration used by the DeepAR training script
+- `terraform/23_sagemaker_forecast_tft_training/main.tf`
+  exposes the TFT forecast-training source-bundle destination, PyTorch image URIs, and runner configuration used by the TFT training script
+- `terraform/24_sagemaker_anomaly_residual_training/main.tf`
+  exposes the anomaly residual-training source-bundle destination and runner configuration used by the residual anomaly script
+- `terraform/25_sagemaker_anomaly_one_class_svm_training/main.tf`
+  exposes the anomaly One-Class SVM source-bundle destination and runner configuration used by the One-Class SVM training script
 - `terraform/05_lambda_ingestion/main.tf`
   packages and deploys the ingestion Lambda
 - `terraform/06_eventbridge_scheduler/main.tf`
@@ -515,6 +557,12 @@ Current core files:
   trains the first sequential SARIMAX forecast model from Gold forecast features
 - `scripts/run_forecast_deepar_training.py`
   converts Gold forecast rows into DeepAR-compatible series records, evaluates the trained model on a holdout horizon, and persists `evaluation.json` for stage `19`
+- `sagemaker/forecast_tft_training/train.py`
+  trains a Temporal Fusion Transformer from Gold forecast features and writes `evaluation.json` alongside the saved checkpoint
+- `sagemaker/anomaly_residual_training/train.py`
+  trains a residual-based anomaly scorer from Gold anomaly features and writes `evaluation.json` alongside the saved model bundle
+- `sagemaker/anomaly_one_class_svm_training/train.py`
+  trains a One-Class SVM anomaly scorer from Gold anomaly features and writes `evaluation.json` alongside the saved model bundle
 - `sagemaker/anomaly_training/train.py`
   trains the baseline anomaly model from Gold anomaly features
 - `src/energy_forecasting/ml/pipeline.py`
@@ -750,6 +798,9 @@ The current module dependency chain is:
 20. `20_sagemaker_anomaly_endpoint_ops`
 21. `21_sagemaker_forecast_sarimax_training`
 22. `22_sagemaker_forecast_deepar_training`
+23. `23_sagemaker_forecast_tft_training`
+24. `24_sagemaker_anomaly_residual_training`
+25. `25_sagemaker_anomaly_one_class_svm_training`
 
 Why this order matters:
 
@@ -770,6 +821,9 @@ Why this order matters:
 - Forecast endpoint configuration depends on the forecast model package group, the SageMaker execution role, and the KMS key, while the live endpoint deployment also depends on at least one approved forecast model package existing in that group
 - Anomaly endpoint configuration depends on the anomaly model package group, the SageMaker execution role, and the KMS key, while the live endpoint deployment also depends on at least one approved anomaly model package existing in that group
 - Forecast endpoint operations depend on the stable forecast endpoint name and variant name already existing, because autoscaling targets and CloudWatch alarms are attached to the live hosted endpoint
+- TFT forecast training depends on the staged Gold forecast features, the SageMaker execution role, the artefact bucket, the KMS key, and the forecast model package group created by the registry stage
+- Anomaly residual training depends on the staged Gold anomaly features, the SageMaker execution role, the artefact bucket, the KMS key, and the anomaly model package group created by the registry stage
+- One-Class SVM anomaly training depends on the staged Gold anomaly features, the SageMaker execution role, the artefact bucket, the KMS key, and the anomaly model package group created by the registry stage
 
 The deploy script handles that handoff automatically.
 
@@ -833,6 +887,9 @@ python scripts\deploy.py --forecast-training-only
 python scripts\deploy.py --anomaly-training-only
 python scripts\deploy.py --forecast-sarimax-training-only
 python scripts\deploy.py --forecast-deepar-training-only
+python scripts\deploy.py --forecast-tft-training-only
+python scripts\deploy.py --anomaly-residual-training-only
+python scripts\deploy.py --anomaly-one-class-svm-training-only
 python scripts\deploy.py --forecast-endpoint-only
 python scripts\deploy.py --anomaly-endpoint-only
 python scripts\deploy.py --forecast-endpoint-ops-only
@@ -860,6 +917,9 @@ python scripts\deploy.py --forecast-training-only
 python scripts\deploy.py --anomaly-training-only
 python scripts\deploy.py --forecast-sarimax-training-only
 python scripts\deploy.py --forecast-deepar-training-only
+python scripts\deploy.py --forecast-tft-training-only
+python scripts\deploy.py --anomaly-residual-training-only
+python scripts\deploy.py --anomaly-one-class-svm-training-only
 python scripts\deploy.py --forecast-endpoint-only
 python scripts\deploy.py --anomaly-endpoint-only
 python scripts\deploy.py --forecast-endpoint-ops-only
@@ -1069,6 +1129,9 @@ python scripts\destroy.py --forecast-training-only
 python scripts\destroy.py --anomaly-training-only
 python scripts\destroy.py --forecast-sarimax-training-only
 python scripts\destroy.py --forecast-deepar-training-only
+python scripts\destroy.py --forecast-tft-training-only
+python scripts\destroy.py --anomaly-residual-training-only
+python scripts\destroy.py --anomaly-one-class-svm-training-only
 python scripts\destroy.py --forecast-endpoint-only
 python scripts\destroy.py --anomaly-endpoint-only
 python scripts\destroy.py --forecast-endpoint-ops-only
@@ -1345,12 +1408,12 @@ Why they make sense right now:
 - they work with the current Gold tabular feature layout
 - they let the project prove the full SageMaker train-register-deploy path before adding tuning complexity
 
-What we could reasonably try next for forecasting:
+Current sequential forecasting comparison paths in the repo:
 
 - `SARIMAX` as a classical sequential benchmark with exogenous weather regressors
-- `DeepAR` as the first genuinely probabilistic time-series model in the stack
+- `DeepAR` as the first probabilistic built-in time-series model in the stack
 - `Temporal Fusion Transformer` as a stronger covariate-aware deep sequence model
-- optional lighter statistical baselines such as `ARIMA` or `Prophet`
+- optional lighter statistical baselines such as `ARIMA` or `Prophet` still remain open if a simpler benchmark is needed
 
 Practical forecasting direction for this repo:
 
@@ -1360,7 +1423,7 @@ Practical forecasting direction for this repo:
 
 What we could reasonably try next for anomaly detection:
 
-- forecast-residual anomaly scoring built on top of the forecast model
+- forecast-residual anomaly scoring built on top of a learned demand regressor
 - one-class SVM
 - local outlier factor style baselines
 - autoencoder-based detectors
@@ -1845,12 +1908,15 @@ terraform -chdir=terraform/19_sagemaker_model_evaluation validate
 terraform -chdir=terraform/20_sagemaker_anomaly_endpoint_ops validate
 terraform -chdir=terraform/21_sagemaker_forecast_sarimax_training validate
 terraform -chdir=terraform/22_sagemaker_forecast_deepar_training validate
+terraform -chdir=terraform/23_sagemaker_forecast_tft_training validate
+terraform -chdir=terraform/24_sagemaker_anomaly_residual_training validate
+terraform -chdir=terraform/25_sagemaker_anomaly_one_class_svm_training validate
 ```
 
 Python checks:
 
 ```powershell
-uv run python -m py_compile scripts\deploy.py scripts\destroy.py scripts\run_forecast_training.py scripts\run_anomaly_training.py scripts\run_forecast_sarimax_training.py scripts\run_forecast_deepar_training.py scripts\deploy_forecast_endpoint.py scripts\deploy_anomaly_endpoint.py scripts\invoke_forecast_endpoint.py scripts\invoke_anomaly_endpoint.py scripts\evaluate_model_package.py lambda\ingestion\app.py glue\jobs\bronze_to_silver.py glue\jobs\silver_to_gold.py sagemaker/forecast_training/train.py sagemaker/forecast_training/inference.py sagemaker/forecast_sarimax_training/train.py sagemaker/forecast_sarimax_training/inference.py sagemaker/anomaly_training/train.py sagemaker/anomaly_training/inference.py
+uv run python -m py_compile scripts\deploy.py scripts\destroy.py scripts\run_forecast_training.py scripts\run_anomaly_training.py scripts\run_forecast_sarimax_training.py scripts\run_forecast_deepar_training.py scripts\run_forecast_tft_training.py scripts\run_anomaly_residual_training.py scripts\run_anomaly_one_class_svm_training.py scripts\deploy_forecast_endpoint.py scripts\deploy_anomaly_endpoint.py scripts\invoke_forecast_endpoint.py scripts\invoke_anomaly_endpoint.py scripts\evaluate_model_package.py lambda\ingestion\app.py glue\jobs\bronze_to_silver.py glue\jobs\silver_to_gold.py sagemaker/forecast_training/train.py sagemaker/forecast_training/inference.py sagemaker/forecast_sarimax_training/train.py sagemaker/forecast_sarimax_training/inference.py sagemaker/forecast_tft_training/train.py sagemaker/forecast_tft_training/inference.py sagemaker/anomaly_training/train.py sagemaker/anomaly_training/inference.py sagemaker/anomaly_residual_training/train.py sagemaker/anomaly_residual_training/inference.py sagemaker/anomaly_one_class_svm_training/train.py sagemaker/anomaly_one_class_svm_training/inference.py
 uv run pytest
 ```
 
@@ -1897,10 +1963,16 @@ aws sagemaker list-domains --query "Domains[?contains(DomainName, 'energyops')].
 - If the SageMaker SARIMAX forecast-training container fails while importing `statsmodels`, `scipy`, `pandas`, or `numpy`, check the pinned versions in `sagemaker/forecast_sarimax_training/requirements.txt`. That stage still uses the SageMaker scikit-learn image, so binary compatibility across the scientific stack matters there too.
 - If `scripts/run_forecast_deepar_training.py` fails before SageMaker training starts, confirm that Gold forecast features exist in S3 and that the local environment has both `boto3` and `pyarrow` available through `uv run`.
 - If the temporary DeepAR evaluation endpoint fails to come online, inspect the training artefacts and the built-in DeepAR model image first. That runner creates and deletes a short-lived evaluation endpoint so it can persist `evaluation.json` for stage `19`.
+- If the TFT training container fails while installing dependencies, review `sagemaker/forecast_tft_training/requirements.txt` first. That stage relies on the SageMaker PyTorch container plus pinned `lightning` and `pytorch-forecasting` versions inside the uploaded source bundle.
+- If the anomaly residual-scoring stage flags too many or too few anomalies, inspect the learned residual threshold in `evaluation.json` first. That stage promotes based on anomaly rate, so threshold drift shows up there before deployment.
+- If the One-Class SVM stage flags too many or too few anomalies, inspect the learned `score_threshold` in `evaluation.json` first and remember that the current stage still uses a simple anomaly-rate gate rather than labelled precision or recall.
 - If the SageMaker anomaly-training container fails while importing `pandas` or `numpy`, apply the same rule to `sagemaker/anomaly_training/requirements.txt`, because it uses the same scikit-learn image family.
 - If `scripts/run_forecast_training.py` says a forecast-training Terraform output is missing, reapply `terraform/14_sagemaker_forecast_training` first so the latest module outputs are written to state before launching the SageMaker job.
 - If `scripts/run_forecast_sarimax_training.py` says a SARIMAX forecast-training Terraform output is missing, reapply `terraform/21_sagemaker_forecast_sarimax_training` first so the latest module outputs are written to state before launching the SageMaker job.
 - If `scripts/run_forecast_deepar_training.py` says a DeepAR forecast-training Terraform output is missing, reapply `terraform/22_sagemaker_forecast_deepar_training` first so the latest module outputs are written to state before launching the SageMaker job.
+- If `scripts/run_forecast_tft_training.py` says a TFT forecast-training Terraform output is missing, reapply `terraform/23_sagemaker_forecast_tft_training` first so the latest module outputs are written to state before launching the SageMaker job.
+- If `scripts/run_anomaly_residual_training.py` says an anomaly residual-training Terraform output is missing, reapply `terraform/24_sagemaker_anomaly_residual_training` first so the latest module outputs are written to state before launching the SageMaker job.
+- If `scripts/run_anomaly_one_class_svm_training.py` says an anomaly One-Class SVM Terraform output is missing, reapply `terraform/25_sagemaker_anomaly_one_class_svm_training` first so the latest module outputs are written to state before launching the SageMaker job.
 - If `scripts/run_anomaly_training.py` says an anomaly-training Terraform output is missing, reapply `terraform/15_sagemaker_anomaly_training` first so the latest module outputs are written to state before launching the SageMaker job.
 - If `scripts/evaluate_model_package.py` says a model-evaluation Terraform output is missing, reapply `terraform/19_sagemaker_model_evaluation` first so the latest threshold and report-location outputs are written to state.
 - If `scripts/evaluate_model_package.py` cannot find training metrics for a package, confirm that the corresponding SageMaker training job wrote `evaluation.json` and that the package includes the `training_job_name` customer metadata inserted by the current training runners.
@@ -1939,6 +2011,9 @@ Current implemented scope:
 - anomaly-training source staging plus a runner script for SageMaker training and model registration
 - SARIMAX forecast-training source staging plus a runner script for sequential SageMaker forecast training and model registration
 - DeepAR forecast-training source staging plus a runner script that prepares DeepAR series inputs, performs post-training holdout evaluation, and registers the resulting model package
+- TFT forecast-training source staging plus a runner script that packages a custom PyTorch Temporal Fusion Transformer training bundle and registers the resulting model package
+- anomaly residual-scoring source staging plus a runner script that learns a demand-regression residual threshold and registers the resulting anomaly model package
+- anomaly One-Class SVM source staging plus a runner script that learns a score threshold and registers the resulting anomaly model package
 - forecast endpoint configuration plus a runner script for deploying the latest approved forecast model package
 - anomaly endpoint configuration plus a runner script for deploying the latest approved anomaly model package
 - forecast and anomaly endpoint invocation support
@@ -1948,11 +2023,10 @@ Current implemented scope:
 Recommended next steps:
 
 1. reapply IAM if Studio still cannot inspect deployed assets cleanly
-2. add the next sequential forecasting model after SARIMAX:
-   `DeepAR`, then `Temporal Fusion Transformer`
-3. add explicit anomaly-model comparison:
-   forecast-residual scoring, `One-Class SVM`, and autoencoder-based detection
-4. formalise repeatable endpoint smoke tests
+2. add the next explicit anomaly-model comparison:
+   autoencoder-based detection
+3. formalise repeatable endpoint smoke tests
+4. compare approved anomaly candidates before switching the live anomaly endpoint
 5. implement Feature Store once the Gold feature contract is stable
 6. add MLflow when multi-model experiment comparison becomes active
 7. add model and data quality monitoring rules

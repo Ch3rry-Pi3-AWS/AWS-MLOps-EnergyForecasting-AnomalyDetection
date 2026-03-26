@@ -1,0 +1,7 @@
+aws_region                        = "eu-west-2"
+deployment_name                   = "energyops-dev-creative-antelope"
+kms_key_arn                       = "arn:aws:kms:eu-west-2:123456789012:key/replace-me"
+artefact_bucket_name              = "mlops-artifacts-energyops-dev-creative-antelope"
+lakehouse_bucket_name             = "dl-energyops-dev-creative-antelope"
+sagemaker_role_arn                = "arn:aws:iam::123456789012:role/iam-sagemaker-energyops-dev-creative-antelope"
+forecast_model_package_group_name = "energyops-dev-creative-antelope-forecast-registry"
