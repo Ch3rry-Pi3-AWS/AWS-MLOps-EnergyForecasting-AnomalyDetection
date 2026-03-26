@@ -15,7 +15,6 @@ This script is executed by SageMaker rather than directly from the host shell:
 from __future__ import annotations
 
 import json
-import math
 import os
 from pathlib import Path
 
