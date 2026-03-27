@@ -334,9 +334,37 @@ def get_output_optional(tf_dir: Path, output_name: str) -> str | None:
     """
 
     output = run_capture_optional(["terraform", f"-chdir={tf_dir}", "output", "-raw", output_name])
-    if output:
+    if output and not looks_like_terraform_warning(output):
         return output
     return get_output_from_state(tf_dir, output_name)
+
+
+def looks_like_terraform_warning(output: str) -> bool:
+    """
+    Detect Terraform warning/error text accidentally returned instead of a raw output value.
+
+    Parameters
+    ----------
+    output : str
+        Captured stdout from `terraform output -raw`.
+
+    Returns
+    -------
+    bool
+        `True` when the captured text looks like Terraform warning output rather than a value.
+    """
+
+    text = output.strip()
+    if not text:
+        return True
+
+    warning_markers = (
+        "Warning: No outputs found",
+        "The state file either has no outputs defined",
+        "terraform output",
+        "Error:",
+    )
+    return any(marker in text for marker in warning_markers)
 
 
 def get_output_from_state(tf_dir: Path, output_name: str) -> str | None:
@@ -1336,6 +1364,18 @@ def write_anomaly_endpoint_ops_tfvars(
     write_tfvars(ops_dir / "terraform.tfvars", items)
 
 
+def default_forecast_endpoint_name(context: dict[str, object]) -> str:
+    """Return the stable forecast endpoint name when endpoint outputs are unavailable."""
+
+    return f"{context['deployment_name']}-forecast-endpoint"
+
+
+def default_anomaly_endpoint_name(context: dict[str, object]) -> str:
+    """Return the stable anomaly endpoint name when endpoint outputs are unavailable."""
+
+    return f"{context['deployment_name']}-anomaly-endpoint"
+
+
 def write_model_evaluation_tfvars(
     evaluation_dir: Path,
     context: dict[str, object],
@@ -1917,8 +1957,12 @@ if __name__ == "__main__":
         if args.forecast_endpoint_ops_only:
             context = load_context_outputs(context_dir)
             run(["terraform", f"-chdir={forecast_endpoint_dir}", "init"])
-            forecast_endpoint_name = get_output(forecast_endpoint_dir, "forecast_endpoint_name")
-            forecast_endpoint_variant_name = get_output(forecast_endpoint_dir, "forecast_endpoint_variant_name")
+            forecast_endpoint_name = get_output_optional(
+                forecast_endpoint_dir, "forecast_endpoint_name"
+            ) or default_forecast_endpoint_name(context)
+            forecast_endpoint_variant_name = get_output_optional(
+                forecast_endpoint_dir, "forecast_endpoint_variant_name"
+            ) or "AllTraffic"
             write_forecast_endpoint_ops_tfvars(
                 forecast_endpoint_ops_dir,
                 context,
@@ -1951,8 +1995,12 @@ if __name__ == "__main__":
         if args.anomaly_endpoint_ops_only:
             context = load_context_outputs(context_dir)
             run(["terraform", f"-chdir={anomaly_endpoint_dir}", "init"])
-            anomaly_endpoint_name = get_output(anomaly_endpoint_dir, "anomaly_endpoint_name")
-            anomaly_endpoint_variant_name = get_output(anomaly_endpoint_dir, "anomaly_endpoint_variant_name")
+            anomaly_endpoint_name = get_output_optional(
+                anomaly_endpoint_dir, "anomaly_endpoint_name"
+            ) or default_anomaly_endpoint_name(context)
+            anomaly_endpoint_variant_name = get_output_optional(
+                anomaly_endpoint_dir, "anomaly_endpoint_variant_name"
+            ) or "AllTraffic"
             write_anomaly_endpoint_ops_tfvars(
                 anomaly_endpoint_ops_dir,
                 context,
@@ -2371,8 +2419,12 @@ if __name__ == "__main__":
             and tf_state_exists(forecast_endpoint_ops_dir)
         ):
             run(["terraform", f"-chdir={forecast_endpoint_dir}", "init"])
-            forecast_endpoint_name = get_output(forecast_endpoint_dir, "forecast_endpoint_name")
-            forecast_endpoint_variant_name = get_output(forecast_endpoint_dir, "forecast_endpoint_variant_name")
+            forecast_endpoint_name = get_output_optional(
+                forecast_endpoint_dir, "forecast_endpoint_name"
+            ) or default_forecast_endpoint_name(context)
+            forecast_endpoint_variant_name = get_output_optional(
+                forecast_endpoint_dir, "forecast_endpoint_variant_name"
+            ) or "AllTraffic"
             write_forecast_endpoint_ops_tfvars(
                 forecast_endpoint_ops_dir,
                 context,
@@ -2451,8 +2503,12 @@ if __name__ == "__main__":
             and tf_state_exists(anomaly_endpoint_ops_dir)
         ):
             run(["terraform", f"-chdir={anomaly_endpoint_dir}", "init"])
-            anomaly_endpoint_name = get_output(anomaly_endpoint_dir, "anomaly_endpoint_name")
-            anomaly_endpoint_variant_name = get_output(anomaly_endpoint_dir, "anomaly_endpoint_variant_name")
+            anomaly_endpoint_name = get_output_optional(
+                anomaly_endpoint_dir, "anomaly_endpoint_name"
+            ) or default_anomaly_endpoint_name(context)
+            anomaly_endpoint_variant_name = get_output_optional(
+                anomaly_endpoint_dir, "anomaly_endpoint_variant_name"
+            ) or "AllTraffic"
             write_anomaly_endpoint_ops_tfvars(
                 anomaly_endpoint_ops_dir,
                 context,
