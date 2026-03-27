@@ -56,6 +56,8 @@ This repository currently covers:
 - [Verification Commands](#verification-commands)
 - [Troubleshooting Notes](#troubleshooting-notes)
 - [Current Scope And Next Steps](#current-scope-and-next-steps)
+- [Project Outcome](#project-outcome)
+- [Known Operational Lessons](#known-operational-lessons)
 - [References](#references)
 
 ## Overview
@@ -72,8 +74,8 @@ Upstream data sources used by the ingestion layer:
 
 - [Elexon Insights Solution API Developer Portal](https://developer.data.elexon.co.uk/)
   for GB electricity market datasets, including the public `ITSDO` transmission-system-demand outturn feed exposed by Elexon’s API platform
-- [Elexon public API base](https://data.elexon.co.uk/)
-  which is the live API host used by the ingestion Lambda for demand retrieval
+- `https://data.elexon.co.uk`
+  which is the live API host used by the ingestion Lambda for demand retrieval; this is better kept as a plain host reference in the README because the bare root does not behave like a human-facing docs page
 - [Open-Meteo Weather Forecast API documentation](https://open-meteo.com/en/docs)
   for public hourly weather forecast data such as temperature, relative humidity, and wind speed used in the feature-engineering pipeline
 - [Open-Meteo forecast endpoint](https://api.open-meteo.com/v1/forecast)
@@ -2152,13 +2154,43 @@ Recommended next steps:
 
 </details>
 
+## Project Outcome
+
+<details open>
+<summary>Show or hide section</summary>
+
+- the project was completed end to end across infrastructure, data ingestion, transformation, model training, evaluation, registry, deployment, monitoring, Feature Store, MLflow, and teardown
+- both forecasting and anomaly-detection paths were trained, registered, deployed, invoked, monitored, and smoke-tested successfully
+- `TFT` finished as the strongest offline forecast candidate under the current evaluation setup
+- `DeepAR` finished as the stable real-time-serving forecast model on the live endpoint after the `TFT` hosting path failed SageMaker health checks on the current endpoint configuration
+- SageMaker Feature Store was implemented and backfilled from the Gold datasets
+- a managed SageMaker MLflow Tracking Server was implemented and verified with a successful smoke run in the Studio `Experiments` experience
+- full infrastructure teardown was also exercised successfully, including the additional SageMaker model-package cleanup and versioned-S3 cleanup needed at the end
+
+</details>
+
+## Known Operational Lessons
+
+<details open>
+<summary>Show or hide section</summary>
+
+- offline model quality and real-time serving viability are separate concerns; `TFT` was the best offline forecast model in the current setup, but `DeepAR` was the forecast model that served reliably in real time
+- SageMaker Feature Store offline-store creation required `s3:GetBucketAcl` on the lakehouse bucket in the SageMaker execution-role policy, not just standard bucket and object permissions
+- SageMaker-managed MLflow accepted the service-supported default MLflow version and rejected the originally forced version pin, so leaving `mlflow_version` unset was the safer infrastructure default
+- Feature Store backfill was operationally correct but slow, so that path should be treated as a batch ingestion process rather than a quick smoke step
+- versioned S3 buckets need explicit deletion of object versions and delete markers before the final bucket destroy will succeed
+- SageMaker model package groups cannot be deleted until the model packages inside them are deleted first
+- endpoint resources created by local deployment runners can outlive the Terraform configuration stages that support them, so teardown needs to account for both Terraform-managed and runner-created serving assets
+
+</details>
+
 ## References
 
 <details>
 <summary>Show or hide section</summary>
 
 - [Elexon Developer Portal](https://developer.data.elexon.co.uk/)
-- [Elexon public Insights API base](https://data.elexon.co.uk/)
+- `https://data.elexon.co.uk` as the live Elexon API host used by the Lambda; use the Developer Portal above as the human-facing reference
 - [Open-Meteo Forecast API](https://api.open-meteo.com/v1/forecast)
 - [AWS Lambda](https://docs.aws.amazon.com/lambda/)
 - [AWS EventBridge Scheduler](https://docs.aws.amazon.com/scheduler/)
