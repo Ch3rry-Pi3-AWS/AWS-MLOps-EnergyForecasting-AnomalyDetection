@@ -1,0 +1,12 @@
+aws_region         = "eu-west-2"
+deployment_name    = "energyops-dev-example-otter"
+artefact_bucket_name = "mlops-artifacts-energyops-dev-example-otter"
+sagemaker_role_arn = "arn:aws:iam::123456789012:role/iam-sagemaker-energyops-dev-example-otter"
+
+# Optional overrides:
+# tracking_server_name            = "energyops-dev-example-otter-mlflow-tracking"
+# artifact_store_prefix           = "mlflow"
+# automatic_model_registration    = false
+# mlflow_version                  = "2.13.2"
+# tracking_server_size            = "Small"
+# weekly_maintenance_window_start = "Sun:03:00"

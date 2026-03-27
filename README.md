@@ -31,6 +31,8 @@ This repository currently covers:
 25. an anomaly One-Class SVM training asset stage plus a SageMaker runner script for training and registration
 26. an anomaly autoencoder training asset stage plus a SageMaker runner script for training and registration
 27. a repeatable endpoint smoke-test runner plus lightweight response-contract tests
+28. an offline-first SageMaker Feature Store stage plus a Gold-to-Feature-Store ingestion runner
+29. a managed SageMaker MLflow tracking-server stage plus a smoke runner for logging a sample run
 
 ## Table Of Contents
 
@@ -138,8 +140,16 @@ What exists now:
   exposes the anomaly One-Class SVM training configuration and source-bundle destination consumed by the One-Class SVM runner
 - `terraform/26_sagemaker_anomaly_autoencoder_training`
   exposes the anomaly autoencoder training configuration and source-bundle destination consumed by the autoencoder runner
+- `terraform/28_sagemaker_feature_store`
+  creates offline-first forecast and anomaly SageMaker Feature Groups backed by the lakehouse `feature_store/` prefix
+- `terraform/29_sagemaker_mlflow_tracking`
+  creates a managed SageMaker MLflow tracking server backed by the artefact bucket
 - `scripts/run_endpoint_smoke_tests.py`
   runs repeatable live smoke tests against the deployed forecast and anomaly endpoints using latest real Gold rows where possible
+- `scripts/run_feature_store_ingestion.py`
+  backfills the latest Gold forecast and anomaly rows into the deployed SageMaker Feature Groups
+- `scripts/run_mlflow_tracking_smoke.py`
+  logs a small smoke-test experiment run to the managed SageMaker MLflow tracking server
 
 The SageMaker split is deliberate:
 
@@ -158,7 +168,15 @@ The SageMaker split is deliberate:
 - `24_sagemaker_anomaly_residual_training` adds the first forecast-residual anomaly scoring path while still registering into the shared anomaly model registry and model-evaluation flow
 - `25_sagemaker_anomaly_one_class_svm_training` adds the first explicit one-class anomaly-model comparison path while still registering into the shared anomaly model registry and model-evaluation flow
 - `26_sagemaker_anomaly_autoencoder_training` adds the neural reconstruction-based anomaly-model comparison path while still registering into the shared anomaly model registry and model-evaluation flow
+- `28_sagemaker_feature_store` adds offline-first SageMaker Feature Groups for forecast and anomaly features without forcing online serving or a point-in-time retrieval layer yet
+- `29_sagemaker_mlflow_tracking` adds a managed MLflow experiment-tracking surface inside SageMaker Studio without replacing the current model-registry or endpoint flows
 - `run_endpoint_smoke_tests.py` adds a repeatable live serving check so endpoint regressions can be caught without relying on ad hoc terminal commands
+
+One important forecast-serving nuance now exists in the repo:
+
+- `TFT` is currently the strongest offline forecast candidate by the current holdout metrics
+- `DeepAR` is currently the real-time-servable forecast candidate backing the live endpoint
+- the live forecast endpoint was rolled back to `DeepAR` after the `TFT` hosting path failed SageMaker health checks on the current endpoint setup
 
 Those two concerns are related, but they are not the same thing. A model
 package group can exist perfectly well without a Studio domain, and a Studio
@@ -332,6 +350,8 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |   |-- run_anomaly_residual_training.py
 |   |-- run_anomaly_one_class_svm_training.py
 |   |-- run_anomaly_autoencoder_training.py
+|   |-- run_feature_store_ingestion.py
+|   |-- run_mlflow_tracking_smoke.py
 |   |-- run_endpoint_smoke_tests.py
 |   |-- run_forecast_sarimax_training.py
 |   |-- run_forecast_deepar_training.py
@@ -348,6 +368,7 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |       |   `-- public_sources.py
 |       |-- ml/
 |       |   |-- __init__.py
+|       |   |-- feature_store.py
 |       |   |-- endpoint_smoke.py
 |       |   |-- evaluation.py
 |       |   `-- pipeline.py
@@ -471,10 +492,21 @@ AWS-MLOps-EnergyForecasting-AnomalyDetection/
 |       |-- outputs.tf
 |       |-- terraform.tfvars.example
 |       `-- variables.tf
+|   `-- 28_sagemaker_feature_store/
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- terraform.tfvars.example
+|       `-- variables.tf
+|   `-- 29_sagemaker_mlflow_tracking/
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- terraform.tfvars.example
+|       `-- variables.tf
 |-- tests/
 |   |-- test_bronze_to_silver_job.py
 |   |-- test_lambda_ingestion.py
 |   |-- test_endpoint_smoke.py
+|   |-- test_feature_store.py
 |   |-- test_model_evaluation.py
 |   |-- test_ml_pipeline.py
 |   |-- test_public_sources.py
@@ -508,6 +540,10 @@ Current core files:
   launches the One-Class SVM anomaly training job, learns a score threshold, and registers the resulting anomaly model package
 - `scripts/run_anomaly_autoencoder_training.py`
   launches the autoencoder anomaly training job, learns a reconstruction-error threshold, and registers the resulting anomaly model package
+- `scripts/run_feature_store_ingestion.py`
+  backfills the Gold forecast and anomaly datasets into the deployed SageMaker Feature Groups
+- `scripts/run_mlflow_tracking_smoke.py`
+  logs a small smoke-test experiment run to the managed SageMaker MLflow tracking server
 - `scripts/run_endpoint_smoke_tests.py`
   runs repeatable live smoke tests against the forecast and anomaly endpoints using the latest Gold rows when available
 - `scripts/deploy_forecast_endpoint.py`
@@ -546,6 +582,12 @@ Current core files:
   exposes the anomaly One-Class SVM source-bundle destination and runner configuration used by the One-Class SVM training script
 - `terraform/26_sagemaker_anomaly_autoencoder_training/main.tf`
   exposes the anomaly autoencoder source-bundle destination and runner configuration used by the autoencoder training script
+- `terraform/28_sagemaker_feature_store/main.tf`
+  creates the offline-first forecast and anomaly Feature Groups plus their offline-store S3 destinations
+- `terraform/29_sagemaker_mlflow_tracking/main.tf`
+  creates the managed SageMaker MLflow tracking server and binds its artefact store to the artefact bucket
+- `src/energy_forecasting/ml/feature_store.py`
+  keeps the Gold-row sorting and SageMaker Feature Store record builders shared by the Feature Store ingestion runner
 - `src/energy_forecasting/ml/endpoint_smoke.py`
   keeps the latest-Gold-row payload builders and response-contract validators shared by the live invocation helpers and smoke-test runner
 - `terraform/05_lambda_ingestion/main.tf`
@@ -831,6 +873,8 @@ The current module dependency chain is:
 24. `24_sagemaker_anomaly_residual_training`
 25. `25_sagemaker_anomaly_one_class_svm_training`
 26. `26_sagemaker_anomaly_autoencoder_training`
+28. `28_sagemaker_feature_store`
+29. `29_sagemaker_mlflow_tracking`
 
 Why this order matters:
 
@@ -854,6 +898,8 @@ Why this order matters:
 - TFT forecast training depends on the staged Gold forecast features, the SageMaker execution role, the artefact bucket, the KMS key, and the forecast model package group created by the registry stage
 - Anomaly residual training depends on the staged Gold anomaly features, the SageMaker execution role, the artefact bucket, the KMS key, and the anomaly model package group created by the registry stage
 - One-Class SVM anomaly training depends on the staged Gold anomaly features, the SageMaker execution role, the artefact bucket, the KMS key, and the anomaly model package group created by the registry stage
+- Feature Store depends on the KMS key, the lakehouse bucket, and the SageMaker execution role because the offline store writes back into the encrypted `feature_store/` prefix inside the lakehouse bucket
+- MLflow tracking depends on the artefact bucket and the SageMaker execution role because the managed tracking server persists run artefacts into S3 and is surfaced in SageMaker Studio
 
 The deploy script handles that handoff automatically.
 
@@ -921,11 +967,29 @@ python scripts\deploy.py --forecast-tft-training-only
 python scripts\deploy.py --anomaly-residual-training-only
 python scripts\deploy.py --anomaly-one-class-svm-training-only
 python scripts\deploy.py --anomaly-autoencoder-training-only
+python scripts\deploy.py --feature-store-only
+python scripts\deploy.py --mlflow-tracking-only
 python scripts\deploy.py --forecast-endpoint-only
 python scripts\deploy.py --anomaly-endpoint-only
 python scripts\deploy.py --forecast-endpoint-ops-only
 python scripts\deploy.py --model-evaluation-only
 python scripts\deploy.py --anomaly-endpoint-ops-only
+```
+
+Backfill the offline Feature Store groups after the stage is deployed:
+
+```powershell
+uv run python scripts\run_feature_store_ingestion.py
+uv run python scripts\run_feature_store_ingestion.py --forecast-only --max-records 250
+uv run python scripts\run_feature_store_ingestion.py --anomaly-only --max-records 250
+```
+
+Create the managed MLflow tracking server and log a sample run:
+
+```powershell
+python scripts\deploy.py --mlflow-tracking-only
+uv sync --extra mlflow
+uv run --extra mlflow python scripts\run_mlflow_tracking_smoke.py
 ```
 
 Expected targeted deploy order:
@@ -952,6 +1016,8 @@ python scripts\deploy.py --forecast-tft-training-only
 python scripts\deploy.py --anomaly-residual-training-only
 python scripts\deploy.py --anomaly-one-class-svm-training-only
 python scripts\deploy.py --anomaly-autoencoder-training-only
+python scripts\deploy.py --feature-store-only
+python scripts\deploy.py --mlflow-tracking-only
 python scripts\deploy.py --forecast-endpoint-only
 python scripts\deploy.py --anomaly-endpoint-only
 python scripts\deploy.py --forecast-endpoint-ops-only
@@ -1945,15 +2011,19 @@ terraform -chdir=terraform/23_sagemaker_forecast_tft_training validate
 terraform -chdir=terraform/24_sagemaker_anomaly_residual_training validate
 terraform -chdir=terraform/25_sagemaker_anomaly_one_class_svm_training validate
 terraform -chdir=terraform/26_sagemaker_anomaly_autoencoder_training validate
+terraform -chdir=terraform/28_sagemaker_feature_store validate
+terraform -chdir=terraform/29_sagemaker_mlflow_tracking validate
 ```
 
 Python checks:
 
 ```powershell
-uv run python -m py_compile scripts\deploy.py scripts\destroy.py scripts\run_forecast_training.py scripts\run_anomaly_training.py scripts\run_forecast_sarimax_training.py scripts\run_forecast_deepar_training.py scripts\run_forecast_tft_training.py scripts\run_anomaly_residual_training.py scripts\run_anomaly_one_class_svm_training.py scripts\run_anomaly_autoencoder_training.py scripts\deploy_forecast_endpoint.py scripts\deploy_anomaly_endpoint.py scripts\invoke_forecast_endpoint.py scripts\invoke_anomaly_endpoint.py scripts\evaluate_model_package.py lambda\ingestion\app.py glue\jobs\bronze_to_silver.py glue\jobs\silver_to_gold.py sagemaker/forecast_training/train.py sagemaker/forecast_training/inference.py sagemaker/forecast_sarimax_training/train.py sagemaker/forecast_sarimax_training/inference.py sagemaker/forecast_tft_training/train.py sagemaker/forecast_tft_training/inference.py sagemaker/anomaly_training/train.py sagemaker/anomaly_training/inference.py sagemaker/anomaly_residual_training/train.py sagemaker/anomaly_residual_training/inference.py sagemaker/anomaly_one_class_svm_training/train.py sagemaker/anomaly_one_class_svm_training/inference.py sagemaker/anomaly_autoencoder_training/train.py sagemaker/anomaly_autoencoder_training/inference.py
+uv run python -m py_compile scripts\deploy.py scripts\destroy.py scripts\run_forecast_training.py scripts\run_anomaly_training.py scripts\run_forecast_sarimax_training.py scripts\run_forecast_deepar_training.py scripts\run_forecast_tft_training.py scripts\run_anomaly_residual_training.py scripts\run_anomaly_one_class_svm_training.py scripts\run_anomaly_autoencoder_training.py scripts\run_feature_store_ingestion.py scripts\run_mlflow_tracking_smoke.py scripts\deploy_forecast_endpoint.py scripts\deploy_anomaly_endpoint.py scripts\invoke_forecast_endpoint.py scripts\invoke_anomaly_endpoint.py scripts\evaluate_model_package.py scripts\run_endpoint_smoke_tests.py lambda\ingestion\app.py glue\jobs\bronze_to_silver.py glue\jobs\silver_to_gold.py src\energy_forecasting\ml\feature_store.py src\energy_forecasting\ml\endpoint_smoke.py sagemaker/forecast_training/train.py sagemaker/forecast_training/inference.py sagemaker/forecast_sarimax_training/train.py sagemaker/forecast_sarimax_training/inference.py sagemaker/forecast_tft_training/train.py sagemaker/forecast_tft_training/inference.py sagemaker/anomaly_training/train.py sagemaker/anomaly_training/inference.py sagemaker/anomaly_residual_training/train.py sagemaker/anomaly_residual_training/inference.py sagemaker/anomaly_one_class_svm_training/train.py sagemaker/anomaly_one_class_svm_training/inference.py sagemaker/anomaly_autoencoder_training/train.py sagemaker/anomaly_autoencoder_training/inference.py
 uv run pytest
 uv run python scripts\run_endpoint_smoke_tests.py --forecast-only --show-payload
 uv run python scripts\run_endpoint_smoke_tests.py --anomaly-only --show-payload
+uv run python scripts\run_feature_store_ingestion.py --forecast-only --max-records 10
+uv run --extra mlflow python scripts\run_mlflow_tracking_smoke.py
 ```
 
 AWS resource inspection examples:
@@ -2011,6 +2081,13 @@ aws sagemaker list-domains --query "Domains[?contains(DomainName, 'energyops')].
 - If `scripts/run_anomaly_residual_training.py` says an anomaly residual-training Terraform output is missing, reapply `terraform/24_sagemaker_anomaly_residual_training` first so the latest module outputs are written to state before launching the SageMaker job.
 - If `scripts/run_anomaly_one_class_svm_training.py` says an anomaly One-Class SVM Terraform output is missing, reapply `terraform/25_sagemaker_anomaly_one_class_svm_training` first so the latest module outputs are written to state before launching the SageMaker job.
 - If `scripts/run_anomaly_autoencoder_training.py` says an anomaly autoencoder Terraform output is missing, reapply `terraform/26_sagemaker_anomaly_autoencoder_training` first so the latest module outputs are written to state before launching the SageMaker job.
+- If `scripts/run_feature_store_ingestion.py` says a Feature Store Terraform output is missing, reapply `terraform/28_sagemaker_feature_store` first so the latest feature-group names and Gold dataset URIs are written to state.
+- If `scripts/run_feature_store_ingestion.py` fails with a Feature Group status other than `Created`, wait for the Terraform-created Feature Groups to finish provisioning before retrying the backfill.
+- If `terraform/28_sagemaker_feature_store` fails while creating a Feature Group with an offline-store S3 validation error, confirm that the SageMaker execution role can call `s3:GetBucketAcl` on the lakehouse bucket in addition to the existing bucket and object permissions.
+- If `scripts/run_mlflow_tracking_smoke.py` exits immediately with a missing-module message, install the optional MLflow dependencies with `uv sync --extra mlflow` first. The managed tracking stage is part of the infrastructure, but the Python MLflow client remains an optional local dependency.
+- If `scripts/run_mlflow_tracking_smoke.py` says an MLflow tracking Terraform output is missing, reapply `terraform/29_sagemaker_mlflow_tracking` first so the tracking server ARN and URL are written to state.
+- SageMaker MLflow expects maintenance windows in `Sun:03:00` style casing, not uppercase day names like `SUN:03:00`.
+- If SageMaker rejects the configured MLflow version, leave `mlflow_version` unset and let the managed service choose a supported default, or override it explicitly in `terraform/29_sagemaker_mlflow_tracking/terraform.tfvars` with a currently supported version.
 - If `scripts/run_anomaly_training.py` says an anomaly-training Terraform output is missing, reapply `terraform/15_sagemaker_anomaly_training` first so the latest module outputs are written to state before launching the SageMaker job.
 - If `scripts/evaluate_model_package.py` says a model-evaluation Terraform output is missing, reapply `terraform/19_sagemaker_model_evaluation` first so the latest threshold and report-location outputs are written to state.
 - If `scripts/evaluate_model_package.py` cannot find training metrics for a package, confirm that the corresponding SageMaker training job wrote `evaluation.json` and that the package includes the `training_job_name` customer metadata inserted by the current training runners.
@@ -2051,10 +2128,13 @@ Current implemented scope:
 - SARIMAX forecast-training source staging plus a runner script for sequential SageMaker forecast training and model registration
 - DeepAR forecast-training source staging plus a runner script that prepares DeepAR series inputs, performs post-training holdout evaluation, and registers the resulting model package
 - TFT forecast-training source staging plus a runner script that packages a custom PyTorch Temporal Fusion Transformer training bundle and registers the resulting model package
+- offline-first SageMaker Feature Groups for forecast and anomaly data plus a runner script that backfills those groups directly from the Gold S3 datasets
+- a managed SageMaker MLflow tracking server plus a smoke runner that logs a sample experiment run into the new Studio `Experiments` experience
 - anomaly residual-scoring source staging plus a runner script that learns a demand-regression residual threshold and registers the resulting anomaly model package
 - anomaly One-Class SVM source staging plus a runner script that learns a score threshold and registers the resulting anomaly model package
 - anomaly autoencoder source staging plus a runner script that learns a reconstruction-error threshold and registers the resulting anomaly model package
 - repeatable endpoint smoke tests for both live SageMaker endpoints using latest real Gold rows
+- `TFT` is currently the strongest offline forecast candidate by the current evaluation metrics, while `DeepAR` is the live real-time forecast endpoint model because the `TFT` hosting path failed health checks on the current endpoint configuration
 - forecast endpoint configuration plus a runner script for deploying the latest approved forecast model package
 - anomaly endpoint configuration plus a runner script for deploying the latest approved anomaly model package
 - forecast and anomaly endpoint invocation support
@@ -2063,11 +2143,11 @@ Current implemented scope:
 
 Recommended next steps:
 
-1. reapply IAM if Studio still cannot inspect deployed assets cleanly
-2. run and compare the residual, One-Class SVM, and autoencoder anomaly candidates
+1. run and compare the residual, One-Class SVM, and autoencoder anomaly candidates
+2. backfill the offline Feature Store groups from the current Gold datasets
 3. compare approved anomaly candidates before switching the live anomaly endpoint
-4. implement Feature Store once the Gold feature contract is stable
-5. add MLflow when multi-model experiment comparison becomes active
+4. connect the forecast and anomaly training runners to MLflow once run-by-run experiment comparison becomes the main workflow
+5. strengthen forecast evaluation beyond a single short holdout window
 6. add model and data quality monitoring rules
 7. add endpoint authentication, client integration, and retraining rules
 
