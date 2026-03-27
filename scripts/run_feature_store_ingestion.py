@@ -30,13 +30,6 @@ except ModuleNotFoundError as exc:  # pragma: no cover - environment guard
         "`uv sync --dev` and rerun via `uv run python scripts/run_feature_store_ingestion.py`."
     ) from exc
 
-from energy_forecasting.ml.feature_store import (
-    build_feature_store_record,
-    build_feature_record_id,
-    load_gold_feature_rows,
-)
-
-
 def run_capture_optional(cmd: list[str]) -> str | None:
     """Execute a command and return its stripped stdout, or `None` on failure."""
 
@@ -132,6 +125,11 @@ def put_rows(
 ) -> None:
     """Upsert Gold rows into a SageMaker Feature Group with progress output."""
 
+    from energy_forecasting.ml.feature_store import (
+        build_feature_store_record,
+        build_feature_record_id,
+    )
+
     total = len(rows)
     for index, row in enumerate(rows, start=1):
         runtime_client.put_record(
@@ -157,6 +155,8 @@ def ingest_feature_group(
     max_records: int | None,
 ) -> None:
     """Load Gold rows from S3 and write them into one Feature Group."""
+
+    from energy_forecasting.ml.feature_store import load_gold_feature_rows
 
     ensure_feature_group_ready(sagemaker_client, feature_group_name=feature_group_name)
     rows = load_gold_feature_rows(

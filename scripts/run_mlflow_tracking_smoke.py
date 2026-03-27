@@ -13,7 +13,6 @@ import argparse
 import json
 import os
 import subprocess
-import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -149,7 +148,7 @@ def main() -> None:
             mlflow.set_tag("deployment_check", "true")
             mlflow.log_artifact(str(note_path))
 
-    print(f"MLflow smoke run logged successfully.")
+    print("MLflow smoke run logged successfully.")
     print(f"Tracking server: {tracking_server_name}")
     print(f"Tracking URI: {tracking_server_arn}")
     print(f"Experiment: {experiment_name}")
