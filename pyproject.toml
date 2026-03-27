@@ -18,6 +18,10 @@ dev = [
   "pytest>=8.0",
   "ruff>=0.6",
 ]
+mlflow = [
+  "mlflow>=2.13,<3",
+  "sagemaker-mlflow>=0.1,<1",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

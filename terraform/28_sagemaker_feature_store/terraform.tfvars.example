@@ -1,0 +1,14 @@
+aws_region            = "eu-west-2"
+deployment_name       = "energyops-dev-example-otter"
+kms_key_arn           = "arn:aws:kms:eu-west-2:123456789012:key/example"
+lakehouse_bucket_name = "dl-energyops-dev-example-otter"
+sagemaker_role_arn    = "arn:aws:iam::123456789012:role/iam-sagemaker-energyops-dev-example-otter"
+
+# Optional overrides:
+# feature_store_prefix         = "feature_store"
+# gold_forecast_features_prefix = "gold/forecast_features"
+# gold_anomaly_features_prefix  = "gold/anomaly_features"
+# forecast_feature_group_name   = "energyops-dev-example-otter-forecast-feature-group"
+# anomaly_feature_group_name    = "energyops-dev-example-otter-anomaly-feature-group"
+# record_identifier_feature_name = "feature_record_id"
+# event_time_feature_name        = "interval_start_utc"

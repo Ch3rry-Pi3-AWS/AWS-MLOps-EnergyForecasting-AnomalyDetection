@@ -1532,7 +1532,7 @@ About the Studio `Experiments` tab and MLflow:
 
 - in the current SageMaker Studio experience, the `Experiments` area is MLflow-oriented rather than the older Studio Classic SageMaker Experiments flow
 - that means the page becomes useful once you create or connect an MLflow Tracking Server and log runs to it
-- this project is **not** using MLflow yet; it is currently using SageMaker training jobs plus SageMaker Model Registry directly
+- this project now has a managed SageMaker MLflow Tracking Server and a verified smoke-run path, while still keeping SageMaker training jobs and SageMaker Model Registry as the core training and promotion flow
 
 So, is new Studio pushing users toward MLflow?
 
@@ -1542,8 +1542,8 @@ So, is new Studio pushing users toward MLflow?
 
 Practical recommendation for this repo:
 
-- keep the current SageMaker-native flow for now
-- add MLflow once you start comparing multiple model families, hyperparameter runs, or feature-set variants and want a stronger experiment-tracking UI
+- keep the current SageMaker-native registry and endpoint flow
+- start wiring forecast and anomaly training runners into MLflow now that the managed tracking server is live, especially as model-family comparison becomes the main workflow
 
 </details>
 
@@ -2144,12 +2144,11 @@ Current implemented scope:
 Recommended next steps:
 
 1. run and compare the residual, One-Class SVM, and autoencoder anomaly candidates
-2. backfill the offline Feature Store groups from the current Gold datasets
-3. compare approved anomaly candidates before switching the live anomaly endpoint
-4. connect the forecast and anomaly training runners to MLflow once run-by-run experiment comparison becomes the main workflow
-5. strengthen forecast evaluation beyond a single short holdout window
-6. add model and data quality monitoring rules
-7. add endpoint authentication, client integration, and retraining rules
+2. compare approved anomaly candidates before switching the live anomaly endpoint
+3. connect the forecast and anomaly training runners to MLflow so runs, params, metrics, and artefacts are captured consistently
+4. strengthen forecast evaluation beyond a single short holdout window
+5. add model and data quality monitoring rules
+6. add endpoint authentication, client integration, and retraining rules
 
 </details>
 

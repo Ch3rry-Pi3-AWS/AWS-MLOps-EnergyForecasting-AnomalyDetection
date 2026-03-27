@@ -12,32 +12,34 @@ Notes
   deletion of earlier modules.
 - Full destroy removes resources in this order:
 
-    1. SageMaker anomaly endpoint operations
-    2. SageMaker model evaluation
-    3. SageMaker forecast endpoint operations
-    4. SageMaker anomaly endpoint configuration
-    5. SageMaker forecast endpoint configuration
-    6. SageMaker anomaly autoencoder training assets
-    7. SageMaker anomaly One-Class SVM training assets
-    8. SageMaker anomaly residual-scoring training assets
-    9. SageMaker forecast TFT training assets
-    10. SageMaker forecast DeepAR training assets
-    11. SageMaker forecast SARIMAX training assets
-    12. SageMaker anomaly training assets
-    13. SageMaker forecast training assets
-    14. SageMaker Studio domain
-    15. SageMaker model registry
-    16. Glue Silver-to-Gold scheduler
-    17. Glue Silver-to-Gold job
-    18. Glue Bronze-to-Silver scheduler
-    19. Glue Bronze-to-Silver job
-    20. Glue catalogue
-    21. EventBridge Scheduler
-    22. Lambda ingestion
-    23. IAM foundation
-    24. S3 lakehouse
-    25. KMS
-    26. Project context
+    1. SageMaker MLflow tracking server configuration
+    2. SageMaker Feature Store configuration
+    3. SageMaker anomaly endpoint operations
+    4. SageMaker model evaluation
+    5. SageMaker forecast endpoint operations
+    6. SageMaker anomaly endpoint configuration
+    7. SageMaker forecast endpoint configuration
+    8. SageMaker anomaly autoencoder training assets
+    9. SageMaker anomaly One-Class SVM training assets
+    10. SageMaker anomaly residual-scoring training assets
+    11. SageMaker forecast TFT training assets
+    12. SageMaker forecast DeepAR training assets
+    13. SageMaker forecast SARIMAX training assets
+    14. SageMaker anomaly training assets
+    15. SageMaker forecast training assets
+    16. SageMaker Studio domain
+    17. SageMaker model registry
+    18. Glue Silver-to-Gold scheduler
+    19. Glue Silver-to-Gold job
+    20. Glue Bronze-to-Silver scheduler
+    21. Glue Bronze-to-Silver job
+    22. Glue catalogue
+    23. EventBridge Scheduler
+    24. Lambda ingestion
+    25. IAM foundation
+    26. S3 lakehouse
+    27. KMS
+    28. Project context
 
 Examples
 --------
@@ -100,6 +102,14 @@ Destroy only the anomaly One-Class SVM training asset stage:
 Destroy only the anomaly autoencoder training asset stage:
 
 >>> # python scripts/destroy.py --anomaly-autoencoder-training-only
+
+Destroy only the Feature Store stage:
+
+>>> # python scripts/destroy.py --feature-store-only
+
+Destroy only the MLflow tracking stage:
+
+>>> # python scripts/destroy.py --mlflow-tracking-only
 
 Destroy only the forecast-endpoint configuration stage:
 
@@ -1132,6 +1142,72 @@ def write_anomaly_autoencoder_training_tfvars(
     write_tfvars(training_dir / "terraform.tfvars", items)
 
 
+def write_feature_store_tfvars(
+    feature_store_dir: Path,
+    context: dict[str, object],
+    kms_key_arn: str,
+    lakehouse_bucket_name: str,
+    sagemaker_role_arn: str,
+) -> None:
+    """
+    Write the live variables file for the SageMaker Feature Store module.
+
+    Parameters
+    ----------
+    feature_store_dir : Path
+        Terraform directory for `28_sagemaker_feature_store`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    kms_key_arn : str
+        KMS key ARN used to encrypt the offline-store prefixes.
+    lakehouse_bucket_name : str
+        Name of the S3 lakehouse bucket that stores Gold and offline Feature Store data.
+    sagemaker_role_arn : str
+        IAM role ARN used by SageMaker Feature Store for offline-store access.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("kms_key_arn", kms_key_arn),
+        ("lakehouse_bucket_name", lakehouse_bucket_name),
+        ("sagemaker_role_arn", sagemaker_role_arn),
+        ("tags", context["standard_tags"]),
+    ]
+    write_tfvars(feature_store_dir / "terraform.tfvars", items)
+
+
+def write_mlflow_tracking_tfvars(
+    tracking_dir: Path,
+    context: dict[str, object],
+    artefact_bucket_name: str,
+    sagemaker_role_arn: str,
+) -> None:
+    """
+    Write the live variables file for the SageMaker MLflow tracking-server module.
+
+    Parameters
+    ----------
+    tracking_dir : Path
+        Terraform directory for `29_sagemaker_mlflow_tracking`.
+    context : dict[str, object]
+        Shared deployment context returned by `load_context_outputs`.
+    artefact_bucket_name : str
+        Name of the S3 artefact bucket used for MLflow artefacts.
+    sagemaker_role_arn : str
+        IAM role ARN used by the managed SageMaker MLflow tracking server.
+    """
+
+    items = [
+        ("aws_region", context["aws_region"]),
+        ("deployment_name", context["deployment_name"]),
+        ("artefact_bucket_name", artefact_bucket_name),
+        ("sagemaker_role_arn", sagemaker_role_arn),
+        ("tags", context["standard_tags"]),
+    ]
+    write_tfvars(tracking_dir / "terraform.tfvars", items)
+
+
 def write_forecast_endpoint_tfvars(
     endpoint_dir: Path,
     context: dict[str, object],
@@ -1367,6 +1443,8 @@ if __name__ == "__main__":
         group.add_argument("--anomaly-residual-training-only", action="store_true", help="Destroy only the SageMaker anomaly residual-scoring training asset stack")
         group.add_argument("--anomaly-one-class-svm-training-only", action="store_true", help="Destroy only the SageMaker anomaly One-Class SVM training asset stack")
         group.add_argument("--anomaly-autoencoder-training-only", action="store_true", help="Destroy only the SageMaker anomaly autoencoder training asset stack")
+        group.add_argument("--feature-store-only", action="store_true", help="Destroy only the SageMaker Feature Store stack")
+        group.add_argument("--mlflow-tracking-only", action="store_true", help="Destroy only the SageMaker MLflow tracking server stack")
         group.add_argument("--forecast-endpoint-only", action="store_true", help="Destroy only the SageMaker forecast endpoint configuration stack")
         group.add_argument("--anomaly-endpoint-only", action="store_true", help="Destroy only the SageMaker anomaly endpoint configuration stack")
         group.add_argument("--forecast-endpoint-ops-only", action="store_true", help="Destroy only the SageMaker forecast endpoint monitoring and autoscaling stack")
@@ -1403,6 +1481,8 @@ if __name__ == "__main__":
         anomaly_residual_training_dir = repo_root / "terraform" / "24_sagemaker_anomaly_residual_training"
         anomaly_one_class_svm_training_dir = repo_root / "terraform" / "25_sagemaker_anomaly_one_class_svm_training"
         anomaly_autoencoder_training_dir = repo_root / "terraform" / "26_sagemaker_anomaly_autoencoder_training"
+        feature_store_dir = repo_root / "terraform" / "28_sagemaker_feature_store"
+        mlflow_tracking_dir = repo_root / "terraform" / "29_sagemaker_mlflow_tracking"
 
         if args.context_only:
             destroy_stack_if_state(context_dir)
@@ -1763,6 +1843,39 @@ if __name__ == "__main__":
                 anomaly_model_package_group_name,
             )
             destroy_stack_if_state(anomaly_autoencoder_training_dir)
+            sys.exit(0)
+
+        if args.feature_store_only:
+            context = load_context_outputs(context_dir)
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={s3_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            lakehouse_bucket_name = get_output(s3_dir, "lakehouse_bucket_name")
+            sagemaker_role_arn = get_output(iam_dir, "sagemaker_role_arn")
+            write_feature_store_tfvars(
+                feature_store_dir,
+                context,
+                kms_key_arn,
+                lakehouse_bucket_name,
+                sagemaker_role_arn,
+            )
+            destroy_stack_if_state(feature_store_dir)
+            sys.exit(0)
+
+        if args.mlflow_tracking_only:
+            context = load_context_outputs(context_dir)
+            run(["terraform", f"-chdir={s3_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            artefact_bucket_name = get_output(s3_dir, "artefact_bucket_name")
+            sagemaker_role_arn = get_output(iam_dir, "sagemaker_role_arn")
+            write_mlflow_tracking_tfvars(
+                mlflow_tracking_dir,
+                context,
+                artefact_bucket_name,
+                sagemaker_role_arn,
+            )
+            destroy_stack_if_state(mlflow_tracking_dir)
             sys.exit(0)
 
         if args.forecast_endpoint_only:
@@ -2164,6 +2277,45 @@ if __name__ == "__main__":
             and tf_state_exists(kms_dir)
             and tf_state_exists(s3_dir)
             and tf_state_exists(iam_dir)
+            and tf_state_exists(mlflow_tracking_dir)
+        ):
+            run(["terraform", f"-chdir={s3_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            artefact_bucket_name = get_output(s3_dir, "artefact_bucket_name")
+            sagemaker_role_arn = get_output(iam_dir, "sagemaker_role_arn")
+            write_mlflow_tracking_tfvars(
+                mlflow_tracking_dir,
+                context,
+                artefact_bucket_name,
+                sagemaker_role_arn,
+            )
+
+        if (
+            context
+            and tf_state_exists(kms_dir)
+            and tf_state_exists(s3_dir)
+            and tf_state_exists(iam_dir)
+            and tf_state_exists(feature_store_dir)
+        ):
+            run(["terraform", f"-chdir={kms_dir}", "init"])
+            run(["terraform", f"-chdir={s3_dir}", "init"])
+            run(["terraform", f"-chdir={iam_dir}", "init"])
+            kms_key_arn = get_output(kms_dir, "kms_key_arn")
+            lakehouse_bucket_name = get_output(s3_dir, "lakehouse_bucket_name")
+            sagemaker_role_arn = get_output(iam_dir, "sagemaker_role_arn")
+            write_feature_store_tfvars(
+                feature_store_dir,
+                context,
+                kms_key_arn,
+                lakehouse_bucket_name,
+                sagemaker_role_arn,
+            )
+
+        if (
+            context
+            and tf_state_exists(kms_dir)
+            and tf_state_exists(s3_dir)
+            and tf_state_exists(iam_dir)
             and tf_state_exists(model_registry_dir)
             and tf_state_exists(anomaly_autoencoder_training_dir)
         ):
@@ -2308,6 +2460,8 @@ if __name__ == "__main__":
                 anomaly_endpoint_variant_name,
             )
 
+        destroy_stack_if_state(mlflow_tracking_dir)
+        destroy_stack_if_state(feature_store_dir)
         destroy_stack_if_state(anomaly_endpoint_ops_dir)
         destroy_stack_if_state(model_evaluation_dir)
         destroy_stack_if_state(forecast_endpoint_ops_dir)
